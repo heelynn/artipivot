@@ -1,6 +1,8 @@
 # ArtiPivot 框架设计文档
 
-> 版本: 0.1.0 | 日期: 2026-05-13 | 状态: 草稿
+> 版本: 0.2.0 | 日期: 2026-05-14 | 状态: 草稿
+>
+> **配套文档**：[代码架构设计](./ARCHITECTURE.md) | [记忆系统设计](./MEMORY.md)
 
 ## 1. 背景与目标
 
@@ -24,7 +26,21 @@
 
 ## 2. 架构总览
 
-### 2.1 三层架构总览
+### 2.1 多主 Agent 架构
+
+系统支持**多个主 Agent 并存且完全隔离**。每个主 Agent 是一个独立的运行时实例，拥有自己的路由逻辑、子代理集、工具集和记忆空间。
+
+**隔离维度**：State（独立 TypedDict）、路由逻辑（独立分类器）、子代理（独立子图集）、工具（独立 ToolNode）、会话记忆（thread_id 前缀隔离）、长期记忆（Store namespace 前缀隔离）、模型（可配不同 provider）。
+
+统一通过 **Agent Gateway** 按 `agent_id` 分发请求：
+
+```
+用户请求 → Agent Gateway → 按 agent_id 路由 → Agent A 主图 / Agent B 主图 / Agent C 主图
+```
+
+每个主图内部仍然是 **路由 → 子代理 → 工具** 三层结构。
+
+### 2.2 三层架构总览（单个主图内部）
 
 ```mermaid
 graph TB
@@ -1243,123 +1259,180 @@ flowchart TD
 
 ---
 
-## 8. 目录结构
+## 8. 记忆系统
+
+> 详细设计见 [MEMORY.md](./MEMORY.md)
+
+### 8.1 三层记忆模型
+
+| 层级 | 机制 | 存储内容 | 生命周期 | 后端 |
+|------|------|----------|----------|------|
+| **L1 工作记忆** | 图 State（TypedDict + Reducer） | 当前意图、活跃子代理、中间产物 | 单次调用 | 内存 |
+| **L2 会话记忆** | Checkpointer (per-thread) | 对话消息历史、图执行快照 | 会话内持续 | PostgresSaver |
+| **L3 长期记忆** | Store (跨 thread) | 用户画像、偏好、知识积累 | 永久 | PostgresStore + 语义搜索 |
+
+### 8.2 多 Agent 记忆隔离
+
+- **L2 隔离**：`thread_id` 编码为 `{agent_id}:{session_id}`，同一 Checkpointer 天然隔离
+- **L3 隔离**：Store namespace 编码为 `(agent_id, user_id, type)`，同一 Store 天然隔离
+- **L1 隔离**：每个主图独立 State schema，天然隔离
+
+### 8.3 上下文窗口管理
+
+长对话超出模型上下文窗口时，支持三种策略：
+1. **摘要压缩**（推荐）：LLM 摘要旧消息 + 保留最近 N 条
+2. **截断**：丢弃最旧的消息
+3. **不处理**：由模型自行处理
+
+子代理通过 `agent.yaml` 声明记忆配置：
+
+```yaml
+memory:
+  session: per-invocation           # per-invocation | per-thread | stateless
+  context_window:
+    strategy: summarize              # summarize | trim | none
+    trigger_tokens: 100000
+    keep_messages: 20
+    summary_model: claude-haiku-4-5-20251001
+  long_term:
+    read: [profile, knowledge, agent:self]
+    write: [agent:self]
+```
+
+### 8.4 长期记忆读写
+
+- **写入**：主图 `respond` 节点在对话结束后，LLM 提取用户画像 / 知识 → 写入 Store
+- **读取**：主图 `classify` 节点在对话开始时，从 Store 读取 profile + 语义搜索 knowledge → 注入 prompt
+
+---
+
+## 9. 目录结构
 
 ```
 artipivot/
 ├── pyproject.toml
 ├── doc/
-│   └── DESIGN.md
+│   ├── DESIGN.md
+│   ├── ARCHITECTURE.md           # 代码架构设计
+│   └── MEMORY.md                 # 记忆系统设计
 ├── src/
 │   └── artipivot/
 │       ├── __init__.py
-│       ├── core/
-│       │   ├── __init__.py
-│       │   ├── router.py          # BaseRouter, IntentResult
-│       │   ├── sub_agent.py       # BaseSubAgent
-│       │   ├── tool.py            # BaseTool, ToolSpec, ToolResult
-│       │   └── registry.py        # ClusterPluginRegistry
-│       ├── cluster/
-│       │   ├── __init__.py
-│       │   ├── mongo_store.py     # MongoDB CRUD + Change Stream
-│       │   ├── local_cache.py     # Redis 缓存层
-│       │   ├── artifact_store.py  # S3/MinIO 制品上传下载
-│       │   ├── distributed_lock.py # Redis 分布式锁
-│       │   ├── watcher.py         # Change Stream 热更新
-│       │   └── health.py          # 健康检查 + 故障摘除
-│       ├── admin/
-│       │   ├── __init__.py
-│       │   └── api.py             # 插件管理 REST API
-│       ├── routers/
-│       │   ├── __init__.py
-│       │   └── llm_router.py      # LLM 意图分类器
-│       ├── sub_agents/
-│       │   ├── __init__.py
-│       │   ├── code_assistant.py
-│       │   ├── data_analyst.py
-│       │   └── researcher.py
-│       ├── tools/
-│       │   ├── __init__.py
-│       │   ├── web_search.py
-│       │   ├── code_exec.py
-│       │   ├── file_io.py
-│       │   └── database.py
-│       ├── security/
-│       │   ├── __init__.py
-│       │   ├── permissions.py     # 工具权限矩阵
-│       │   └── sandbox.py         # 沙箱执行
-│       ├── observability/
-│       │   ├── __init__.py
-│       │   ├── tracing.py         # OpenTelemetry 链路追踪
-│       │   └── metrics.py         # 指标采集
-│       └── cli.py                 # CLI 入口
-├── plugins/                       # 外部插件目录
+│       ├── gateway/                  # 多主 Agent 分发层
+│       │   ├── gateway.py            # AgentGateway
+│       │   └── config.py
+│       ├── graph/                    # 核心图构建层
+│       │   ├── state.py
+│       │   ├── context.py
+│       │   ├── root.py
+│       │   ├── router.py
+│       │   └── factory.py
+│       ├── agents/                   # 子代理层
+│       │   ├── base.py
+│       │   ├── programmatic.py
+│       │   ├── declarative.py
+│       │   └── strategies/
+│       ├── tools/                    # 工具层
+│       │   ├── registry.py
+│       │   ├── loader.py
+│       │   ├── mcp_adapter.py
+│       │   ├── openapi_importer.py
+│       │   └── builtin/
+│       ├── memory/                   # 记忆系统
+│       │   ├── checkpointer.py
+│       │   ├── store.py
+│       │   ├── extraction.py
+│       │   └── context_window.py
+│       ├── models/                   # 模型适配层
+│       │   └── provider.py
+│       ├── plugins/                  # 插件管理
+│       │   ├── manager.py
+│       │   ├── watcher.py
+│       │   ├── loader.py
+│       │   └── sandbox.py
+│       ├── api/
+│       │   ├── server.py
+│       │   └── admin.py
+│       ├── cli/
+│       │   └── main.py
+│       └── config.py
+├── plugins/                          # 外部插件目录
 │   └── example_plugin/
 │       ├── manifest.yaml
 │       └── my_agent.py
 ├── deploy/
-│   ├── docker-compose.yaml        # MongoDB + Redis + MinIO 本地开发
+│   ├── docker-compose.yaml
 │   ├── Dockerfile
-│   └── k8s/                       # Kubernetes 部署清单
-│       ├── deployment.yaml
-│       ├── configmap.yaml
-│       └── secrets.yaml
+│   └── k8s/
 └── tests/
-    ├── test_router.py
-    ├── test_registry.py
+    ├── test_gateway/
+    ├── test_graph/
+    ├── test_agents/
+    ├── test_tools/
+    ├── test_memory/
     ├── test_cluster/
     │   ├── test_mongo_store.py
     │   ├── test_change_stream.py
     │   └── test_circuit_breaker.py
-    ├── test_sub_agents/
-    └── test_tools/
+    └── test_sub_agents/
 ```
 
 ---
 
-## 9. 关键设计决策
+## 10. 关键设计决策
 
 | 决策 | 选择 | 理由 |
 |------|------|------|
+| **底层运行时** | **LangGraph v1.2**（不依赖 LangChain 高层包） | LangGraph 可独立使用，提供 StateGraph、Checkpointer、Store 等基础设施；避免 LangChain 高层抽象绑定 |
+| **多主 Agent** | 多个 `CompiledStateGraph` 实例 + Agent Gateway | 每个主 Agent 完全隔离（State / 路由 / 子代理 / 工具 / 记忆），统一入口分发 |
 | 意图识别 | LLM 分类器 + 规则兜底 | 兼顾准确性与延迟，规则兜底保证可用性 |
 | 插件存储 | MongoDB（元数据）+ S3（制品） | Schema-free 适合插件清单；Change Stream 天然支持实时同步 |
 | 本地缓存 | Redis | 毫秒级读取；分布式锁保证并发安全 |
 | 插件分发 | .whl 包 + 制品仓库 | 标准 Python 分发格式；校验 checksum 保证完整性 |
 | 工具协议 | JSON Schema（function-calling 兼容） | 与 OpenAI / Anthropic tool use 协议对齐 |
 | 异步模型 | asyncio（全链路 async） | IO 密集型 Agent 场景，async 是最优解 |
-| 可观测性 | OpenTelemetry | 工业标准，与 Jaeger/Prometheus/Loki 生态无缝集成 |
+| 记忆持久化 | PostgresSaver（会话）+ PostgresStore（长期） | LangGraph 原生支持，thread_id / namespace 隔离 |
+| 上下文管理 | 摘要压缩（自建节点） | 避免引入 langchain 高层包，纯 langgraph 节点实现 |
+| 可观测性 | LangSmith 原生集成 + OpenTelemetry | LangGraph 节点自动 trace；OpenTelemetry 覆盖非图组件 |
 | 安全隔离 | 工具权限矩阵 + 沙箱 | 参考 OpenClaw 沙箱模型，最小权限原则 |
 
 ---
 
-## 10. 路线图
+## 11. 路线图
 
 ### 第一阶段 — MVP（核心框架）
-- [ ] `BaseRouter`、`BaseSubAgent`、`BaseTool` 抽象基类
-- [ ] `ClusterPluginRegistry` 注册与发现
-- [ ] MongoDB 存储 + Change Stream 监听
+- [ ] AgentGateway 多主 Agent 分发
+- [ ] GraphFactory 按 agent_id 构建主图
+- [ ] `BaseRouter`、`BaseSubAgent`、`BaseTool` 抽象
+- [ ] LLM 意图分类器
+- [ ] 1 个主图 + 1 个编程式子代理 + ToolNode
+- [ ] InMemorySaver + InMemoryStore
+- [ ] 3 个内置工具
+
+### 第二阶段 — 声明式 + 记忆
+- [ ] 策略引擎（ReAct / CoT / Function Calling）
+- [ ] YAML 声明式子代理加载
+- [ ] PostgresSaver + PostgresStore 持久化
+- [ ] 上下文窗口管理（摘要压缩）
+- [ ] 长期记忆读写（profile + knowledge 提取）
+- [ ] 子代理 YAML 记忆配置解析
+
+### 第三阶段 — 集群 + 插件
+- [ ] MongoDB 注册表 + Change Stream
+- [ ] 图热重建 + Gateway 原子替换
+- [ ] 插件管理 REST API（发布/下线/灰度）
 - [ ] Redis 本地缓存 + 分布式锁
 - [ ] 制品仓库（S3/MinIO）上传下载
-- [ ] LLM 意图分类器实现
-- [ ] 3 个内置子代理（代码、数据、研究）
-- [ ] 5 个内置工具
-
-### 第二阶段 — 生产加固
-- [ ] 插件管理 REST API（发布/下线/灰度）
-- [ ] OpenTelemetry 集成（链路追踪 + 指标）
-- [ ] 工具权限矩阵
-- [ ] 沙箱执行（代码执行隔离）
-- [ ] 限流控制 + 熔断器
 - [ ] 健康检查 + 故障摘除
-- [ ] docker-compose 本地开发环境
-- [ ] Kubernetes 部署清单
 
-### 第三阶段 — 生态建设
-- [ ] MCP 协议适配器（接入外部 MCP Server）
-- [ ] 插件 CLI（`artipivot plugin install/create/publish`）
+### 第四阶段 — 生产加固 + 生态
+- [ ] LangSmith / OpenTelemetry 可观测性
+- [ ] 工具权限矩阵 + 沙箱执行
+- [ ] 限流控制 + 熔断器
+- [ ] MCP 协议适配器
+- [ ] 插件 CLI（`artipivot plugin init/dev/publish`）
 - [ ] Web UI / API Gateway
-- [ ] 多轮对话记忆
-- [ ] 灰度发布支持（节点组路由）
+- [ ] docker-compose + Kubernetes 部署
 
 ---
 
