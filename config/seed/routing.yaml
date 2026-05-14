@@ -1,0 +1,15 @@
+agents:
+  code_agent:
+    confidence_threshold: 0.7
+    intents:
+      - name: code_write
+        sub_agent: code_writer
+        description: Code writing related
+      - name: code_review
+        sub_agent: code_writer
+        description: Code review related
+      - name: debug
+        sub_agent: code_writer
+        description: Debugging and fixing
+    fallback: fallback
+    clarify: clarify

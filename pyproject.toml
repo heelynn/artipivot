@@ -1,7 +1,31 @@
 [project]
 name = "artipivot"
 version = "0.1.0"
-description = "Add your description here"
+description = "Production-grade multi-agent framework"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi>=0.136.1",
+    "langchain-anthropic>=1.4.3",
+    "langchain-core>=1.4.0",
+    "langchain-openai>=1.2.1",
+    "langgraph>=1.2.0",
+    "orjson>=3.10.0",
+    "python-dotenv>=1.2.2",
+    "pyyaml>=6.0.3",
+    "structlog>=25.5.0",
+    "uvicorn>=0.46.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/artipivot"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

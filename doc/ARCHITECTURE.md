@@ -185,12 +185,15 @@ config_b = {"configurable": {"thread_id": "research_agent:session_123"}}
 
 ### 3.3 共享 Store + namespace 前缀隔离
 
-```python
-# Agent A 的用户画像
-await store.aget(("code_agent", user_id, "profile"), "main")
+节点内通过 `runtime.store` 访问 Store（LangGraph 自动注入）：
 
-# Agent B 的用户画像
-await store.aget(("research_agent", user_id, "profile"), "main")
+```python
+async def my_node(state, runtime: Runtime[AgentContext]):
+    # Agent A 的用户画像
+    profile = await runtime.store.aget(("code_agent", user_id, "profile"), "main")
+
+    # Agent B 的用户画像
+    profile_b = await runtime.store.aget(("research_agent", user_id, "profile"), "main")
 ```
 
 ### 3.4 共享工具池 + 权限矩阵
@@ -251,13 +254,14 @@ START → classify → (conditional edges) → sub_A / sub_B / ... / clarify →
 ### 4.2 条件边
 
 ```python
-def route_by_intent(state: ArtiPivotState) -> str:
-    if state["confidence"] < CONFIDENCE_THRESHOLD:
+def route_by_intent(state: ArtiPivotState, runtime: Runtime[AgentContext]) -> str:
+    # 从动态配置读取阈值
+    threshold = config_center.routing.get_threshold(runtime.context.agent_id)
+    if state["confidence"] < threshold:
         return "clarify"
     intent = state["intent"]
-    if intent in registered_sub_agents:
-        return intent
-    return "fallback"
+    intent_map = config_center.routing.get_intent_map(runtime.context.agent_id)
+    return intent_map.get(intent, "fallback")
 
 builder.add_conditional_edges("classify", route_by_intent)
 ```
@@ -291,10 +295,10 @@ def build_programmatic_subagent(invoke_fn, tools) -> CompiledStateGraph:
 
 ### 5.1 工具定义
 
-使用 `langchain-core` 的 `@tool`（langgraph 传递依赖，无需额外安装）：
+使用 LangChain 的 `@tool` 装饰器（`langchain-core` 作为 langgraph 传递依赖自动安装）：
 
 ```python
-from langchain_core.tools import tool
+from langchain.tools import tool
 
 @tool
 def search(query: str, max_results: int = 5) -> str:
@@ -305,6 +309,8 @@ def search(query: str, max_results: int = 5) -> str:
 ### 5.2 工具注册表
 
 ```python
+from langgraph.prebuilt import ToolNode
+
 class ToolRegistry:
     _tools: dict[str, BaseTool]
     _permissions: dict[str, set[str]]  # agent_id → allowed tool names
@@ -312,6 +318,10 @@ class ToolRegistry:
     def get_for_agent(self, agent_id: str, tool_names: list[str]) -> list[BaseTool]:
         allowed = self._permissions.get(agent_id, set())
         return [self._tools[n] for n in tool_names if n in allowed]
+
+    def get_tool_node(self, agent_id: str, tool_names: list[str]) -> ToolNode:
+        """构建带权限过滤的 ToolNode"""
+        return ToolNode(self.get_for_agent(agent_id, tool_names))
 ```
 
 ### 5.3 MCP 工具适配
@@ -434,7 +444,7 @@ artipivot tool import --pipeline ./plugins/search_translate/pipeline.yaml
 |---|---|---|---|
 | 会话记忆 | `Checkpointer` (per-thread) | 图快照、消息历史 | AsyncPostgresSaver |
 | 长期记忆 | `Store` (跨 thread) | 用户偏好、知识 | PostgresStore + 语义搜索 |
-| 插件元数据 | MongoDB（自定义） | 子代理/工具定义 | MongoDB + S3 |
+| 插件元数据 | DocumentStore（自定义） | 子代理/工具定义 | DocumentStore + ArtifactStore |
 
 ### 6.1 图编译配置
 
@@ -465,7 +475,7 @@ LangGraph 图 `compile()` 后**不可变**。插件变更需重建图。
 ### 7.1 热加载流程
 
 ```
-MongoDB Change Stream → 检测插件变更 → 重建受影响的主图 → 原子替换 AgentGateway 中的实例
+ChangeNotifier（变更通知）→ 检测插件变更 → 重建受影响的主图 → 原子替换 AgentGateway 中的实例
 ```
 
 ### 7.2 图工厂
@@ -551,8 +561,8 @@ src/artipivot/
 │
 ├── plugins/                       # 插件管理
 │   ├── __init__.py
-│   ├── manager.py                 # ClusterPluginRegistry — MongoDB CRUD
-│   ├── watcher.py                 # Change Stream 监听 → 触发图重建
+│   ├── manager.py                 # ClusterPluginRegistry — DocumentStore CRUD
+│   ├── watcher.py                 # ChangeNotifier 监听 → 触发图重建
 │   ├── loader.py                  # 制品下载 → 校验 → 导入 → 实例化
 │   └── sandbox.py                 # 插件隔离环境
 │
@@ -560,7 +570,7 @@ src/artipivot/
 │   ├── __init__.py
 │   ├── config.py                 # ModelConfig 数据结构
 │   ├── provider.py               # ModelProvider — 动态模型解析 + fallback 链
-│   └── loader.py                 # YAML seed → MongoDB 初始加载
+│   └── loader.py                 # YAML seed → DocumentStore 初始加载
 │
 ├── config/                        # 动态配置中心
 │   ├── __init__.py
@@ -568,7 +578,7 @@ src/artipivot/
 │   ├── prompts.py                # PromptStore — 提示词动态管理
 │   ├── ratelimit.py              # RateLimiter — 多维度限流
 │   ├── routing.py                # RoutingConfig — 路由规则
-│   └── seed/                     # 首次启动 seed（YAML → MongoDB）
+│   └── seed/                     # 首次启动 seed（YAML → DocumentStore）
 │       ├── models.yaml
 │       ├── prompts.yaml
 │       ├── ratelimits.yaml
@@ -591,7 +601,7 @@ src/artipivot/
 │   ├── memory.py                 # MemoryLogger — 记忆操作日志
 │   ├── llm_logger.py             # LLMMiddleware — LLM 调用拦截
 │   ├── tool_logger.py            # LoggingToolNode — 工具调用拦截
-│   ├── audit.py                  # AuditLogger — 审计（文件 + MongoDB）
+│   ├── audit.py                  # AuditLogger — 审计（文件 + DocumentStore）
 │   └── otel.py                   # OTel 可选导出
 │
 ├── resilience/                    # 容错与弹性
@@ -634,7 +644,7 @@ observability / resilience
 ### 9.1 设计目标
 
 - 每个 Agent / 子代理可**独立配置** LLM provider + model
-- 模型配置**完全动态**：存储在 MongoDB，运行时可修改，**立即生效无需重建图**
+- 模型配置**完全动态**：存储在 DocumentStore（可配置后端），运行时可修改，**立即生效无需重建图**
 - 支持三级 fallback：子代理模型 → 子代理兜底 → 全局兜底
 - 对上层透明：节点只拿到 `BaseModel` 实例，无需关心 provider 差异
 
@@ -644,7 +654,7 @@ observability / resilience
 
 ```
 ┌───────────────────────────────────────────────────────┐
-│  MongoDB                                              │
+│  DocumentStore（可配置后端）                            │
 │  ┌─────────────────────────────────────────────────┐  │
 │  │  model_configs 集合                              │  │
 │  │  {scope: "global", ...}                         │  │
@@ -652,7 +662,8 @@ observability / resilience
 │  │  {scope: "sub_agent", agent_id: ..., sub: ...}  │  │
 │  └─────────────────────────────────────────────────┘  │
 │                        │                               │
-│              Change Stream                             │
+│              ChangeNotifier                            │
+│              （可配置通知机制）                          │
 │                        │                               │
 │                        ▼                               │
 │  ┌─────────────────────────────────────────────────┐  │
@@ -673,54 +684,41 @@ observability / resilience
 
 ### 9.3 配置存储结构
 
-**MongoDB `model_configs` 集合**：
+**DocumentStore `model_configs` 集合**（具体存储格式由后端决定）：
 
-```javascript
-// 全局配置（全局兜底模型、默认参数）
+```python
+# 全局配置（全局兜底模型、默认参数）
 {
-  "_id": "global",
-  "scope": "global",
-  "fallback_model": {
-    "provider": "openai",
-    "name": "gpt-4o"
-  },
-  "defaults": {
-    "temperature": 0.0,
-    "timeout_seconds": 120
-  },
-  "providers": {
-    "anthropic": {"api_key_env": "ANTHROPIC_API_KEY"},
-    "openai":    {"api_key_env": "OPENAI_API_KEY"}
-  }
+    "_id": "global",
+    "scope": "global",
+    "fallback_model": {"provider": "openai", "name": "gpt-4o"},
+    "defaults": {"temperature": 0.0, "timeout_seconds": 120},
+    "providers": {
+        "anthropic": {"api_key_env": "ANTHROPIC_API_KEY"},
+        "openai":    {"api_key_env": "OPENAI_API_KEY"},
+    },
 }
 
-// 主 Agent 模型配置
+# 主 Agent 模型配置
 {
-  "_id": "code_agent",
-  "scope": "agent",
-  "agent_id": "code_agent",
-  "model": {
-    "provider": "anthropic",
-    "name": "claude-sonnet-4-6",
-    "temperature": 0.0
-  }
+    "_id": "code_agent",
+    "scope": "agent",
+    "agent_id": "code_agent",
+    "model": {"provider": "anthropic", "name": "claude-sonnet-4-6", "temperature": 0.0},
 }
 
-// 子代理模型配置（可选，未配置则继承主 Agent）
+# 子代理模型配置（可选，未配置则继承主 Agent）
 {
-  "_id": "code_agent:code_writer",
-  "scope": "sub_agent",
-  "agent_id": "code_agent",
-  "sub_agent": "code_writer",
-  "model": {
-    "provider": "anthropic",
-    "name": "claude-sonnet-4-6",
-    "temperature": 0.0,
-    "fallback": {
-      "provider": "anthropic",
-      "name": "claude-haiku-4-5-20251001"
-    }
-  }
+    "_id": "code_agent:code_writer",
+    "scope": "sub_agent",
+    "agent_id": "code_agent",
+    "sub_agent": "code_writer",
+    "model": {
+        "provider": "anthropic",
+        "name": "claude-sonnet-4-6",
+        "temperature": 0.0,
+        "fallback": {"provider": "anthropic", "name": "claude-haiku-4-5-20251001"},
+    },
 }
 ```
 
@@ -775,15 +773,17 @@ class ModelConfig:
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 import threading
+from artipivot.storage import DocumentStore, ChangeNotifier
 
 class ModelProvider:
     """模型解析 + fallback 链 + 动态热更新"""
 
-    def __init__(self, mongo_db):
-        self._db = mongo_db
+    def __init__(self, store: DocumentStore, notifier: ChangeNotifier):
+        self._store = store
+        self._notifier = notifier
         self._lock = threading.RLock()
 
-        # 三级配置（从 MongoDB 加载）
+        # 三级配置（从 DocumentStore 加载）
         self._agent_models: dict[str, ModelConfig] = {}
         self._sub_models: dict[str, ModelConfig] = {}          # key = "agent_id:sub_name"
         self._global_fallback: ModelConfig | None = None
@@ -800,24 +800,24 @@ class ModelProvider:
             ),
         }
 
-    # ── 启动时加载 + Change Stream 监听 ──
+    # ── 启动时加载 + ChangeNotifier 监听 ──
 
     async def start(self):
-        """加载全量配置 + 启动 Change Stream 监听"""
+        """加载全量配置 + 启动 ChangeNotifier 监听"""
         await self._load_all()
-        asyncio.create_task(self._watch_changes())
+        await self._notifier.subscribe("model_configs", self._on_change)
 
     async def _load_all(self):
-        """从 MongoDB 加载全部模型配置"""
+        """从 DocumentStore 加载全部模型配置"""
+        docs = await self._store.query("model_configs", {})
         with self._lock:
-            for doc in await self._db.model_configs.find().to_list(None):
-                self._apply_doc(doc)
+            for doc in docs:
+                self._apply_doc(doc.data)
 
-    async def _watch_changes(self):
-        """监听 MongoDB Change Stream，原子更新内存"""
-        async for change in self._db.model_configs.watch():
-            with self._lock:
-                self._apply_doc(change["fullDocument"])
+    async def _on_change(self, collection: str, key: str, action: str, data: dict):
+        """ChangeNotifier 回调，原子更新内存"""
+        with self._lock:
+            self._apply_doc(data)
 
     def _apply_doc(self, doc: dict):
         """根据 scope 更新对应层级"""
@@ -833,27 +833,22 @@ class ModelProvider:
     # ── 管理接口（REST API 调用） ──
 
     async def update_agent_model(self, agent_id: str, model: dict):
-        """更新主 Agent 模型配置 → MongoDB → Change Stream 自动同步"""
-        await self._db.model_configs.update_one(
-            {"scope": "agent", "agent_id": agent_id},
-            {"$set": {"model": model}},
-            upsert=True,
-        )
+        """更新主 Agent 模型配置 → DocumentStore → ChangeNotifier 自动同步"""
+        await self._store.put("model_configs", f"agent:{agent_id}", {
+            "scope": "agent", "agent_id": agent_id, "model": model,
+        })
 
     async def update_sub_model(self, agent_id: str, sub_name: str, model: dict):
         """更新子代理模型配置"""
-        await self._db.model_configs.update_one(
-            {"scope": "sub_agent", "agent_id": agent_id, "sub_agent": sub_name},
-            {"$set": {"model": model}},
-            upsert=True,
-        )
+        await self._store.put("model_configs", f"sub_agent:{agent_id}:{sub_name}", {
+            "scope": "sub_agent", "agent_id": agent_id, "sub_agent": sub_name, "model": model,
+        })
 
     async def update_global_fallback(self, model: dict):
         """更新全局兜底模型"""
-        await self._db.model_configs.update_one(
-            {"scope": "global"},
-            {"$set": {"fallback_model": model}},
-        )
+        await self._store.put("model_configs", "global", {
+            "scope": "global", "fallback_model": model,
+        })
 
     # ── 运行时解析（每次 invoke 时调用） ──
 
@@ -930,7 +925,7 @@ class AgentGateway:
 
 ### 9.9 初始配置来源
 
-系统首次启动时（MongoDB 为空），从 YAML seed 文件加载初始配置：
+系统首次启动时（DocumentStore 为空），从 YAML seed 文件加载初始配置：
 
 ```yaml
 # config/seed/models.yaml — 仅首次启动使用
@@ -979,7 +974,7 @@ agents:
 
 ### 10.1 设计目标
 
-框架中所有运行时参数均从 MongoDB 动态读取，通过 Change Stream 热更新，实现**零重启、零改码**的配置管理。
+框架中所有运行时参数均从 DocumentStore 动态读取，通过 ChangeNotifier 热更新，实现**零重启、零改码**的配置管理。
 
 **配置分类与生效方式**：
 
@@ -995,13 +990,14 @@ agents:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  MongoDB                                                      │
+│  DocumentStore（可配置后端）                                    │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐        │
 │  │ model_configs│  │ prompt_configs│ │  ratelimit   │  ...   │
 │  └──────────────┘  └──────────────┘  └──────────────┘        │
 │         │                  │                 │                 │
 │         └──────────┬───────┘─────────────────┘                 │
-│              Change Stream                                    │
+│              ChangeNotifier                                    │
+│              （可配置通知机制）                                  │
 │                    │                                           │
 │                    ▼                                           │
 │  ┌────────────────────────────────────────────────────────┐   │
@@ -1014,14 +1010,17 @@ agents:
 ```
 
 ```python
+from artipivot.storage import DocumentStore, ChangeNotifier
+
 class ConfigCenter:
     """动态配置中心 — 统一管理所有运行时配置"""
 
-    def __init__(self, mongo_db):
-        self._db = mongo_db
+    def __init__(self, store: DocumentStore, notifier: ChangeNotifier):
+        self._store = store
+        self._notifier = notifier
         self._lock = threading.RLock()
 
-        # 各模块配置（从 MongoDB 加载）
+        # 各模块配置（从 DocumentStore 加载）
         self.models: ModelProvider = ...
         self.prompts: PromptStore = ...
         self.rate_limits: RateLimitConfig = ...
@@ -1029,67 +1028,68 @@ class ConfigCenter:
         self.global_settings: dict = {}
 
     async def start(self):
-        """全量加载 + 启动 Change Stream"""
+        """全量加载 + 启动 ChangeNotifier 监听"""
         await self._load_all()
-        asyncio.create_task(self._watch_changes())
+        await self._notifier.subscribe("model_configs", self.models.apply)
+        await self._notifier.subscribe("prompt_configs", self.prompts.apply)
+        await self._notifier.subscribe("ratelimit_configs", self.rate_limits.apply)
+        await self._notifier.subscribe("routing_configs", self._on_routing_change)
+        await self._notifier.start()
 
-    async def _watch_changes(self):
-        async for change in self._db.watch():
-            collection = change["ns"]["coll"]
-            match collection:
-                case "model_configs":
-                    self.models.apply(change)
-                case "prompt_configs":
-                    self.prompts.apply(change)
-                case "ratelimit_configs":
-                    self.rate_limits.apply(change)
-                case "routing_configs":
-                    self.routing.apply(change)
-                    # 路由变更需重建图
-                    await self._notify_graph_rebuild()
+    async def _load_all(self):
+        """从 DocumentStore 加载全部配置"""
+        for collection in ["model_configs", "prompt_configs", "ratelimit_configs", "routing_configs"]:
+            docs = await self._store.query(collection, {})
+            for doc in docs:
+                self._apply_doc(collection, doc.data)
+
+    async def _on_routing_change(self, collection, key, action, data):
+        """路由配置变更 → 触发图重建"""
+        self.routing.apply(data)
+        await self._notify_graph_rebuild()
 ```
 
 ### 10.3 提示词动态化
 
-提示词存储在 MongoDB `prompt_configs` 集合，节点执行时从 `ConfigCenter.prompts` 读取。
+提示词存储在 DocumentStore `prompt_configs` 集合，节点执行时从 `ConfigCenter.prompts` 读取。
 
 **存储结构**：
 
-```javascript
-// MongoDB prompt_configs 集合
+```python
+# DocumentStore prompt_configs 集合（具体格式由后端决定）
 {
-  "_id": "code_agent:classify",
-  "agent_id": "code_agent",
-  "node": "classify",
-  "system": "你是代码助手的意图分类器。将用户消息分类为以下意图之一...",
-  "few_shots": [
-    {"user": "帮我写个函数", "assistant": "{\"intent\": \"code\", \"confidence\": 0.95}"},
-  ],
-  "output_schema": {  // LLM structured output 的 JSON Schema
-    "type": "object",
-    "properties": {
-      "intent": {"type": "string"},
-      "confidence": {"type": "number"}
-    }
-  },
-  "updated_at": "2026-05-14T10:00:00Z"
+    "_id": "code_agent:classify",
+    "agent_id": "code_agent",
+    "node": "classify",
+    "system": "你是代码助手的意图分类器。将用户消息分类为以下意图之一...",
+    "few_shots": [
+        {"user": "帮我写个函数", "assistant": '{"intent": "code", "confidence": 0.95}'},
+    ],
+    "output_schema": {  # LLM structured output 的 JSON Schema
+        "type": "object",
+        "properties": {
+            "intent": {"type": "string"},
+            "confidence": {"type": "number"},
+        },
+    },
+    "updated_at": "2026-05-14T10:00:00Z",
 }
 
 {
-  "_id": "code_agent:respond",
-  "agent_id": "code_agent",
-  "node": "respond",
-  "system": "请根据以下子代理执行结果，整理为用户友好的回复...",
-  "updated_at": "2026-05-14T10:00:00Z"
+    "_id": "code_agent:respond",
+    "agent_id": "code_agent",
+    "node": "respond",
+    "system": "请根据以下子代理执行结果，整理为用户友好的回复...",
+    "updated_at": "2026-05-14T10:00:00Z",
 }
 
 {
-  "_id": "code_agent:sub:code_writer",
-  "agent_id": "code_agent",
-  "node": "sub_agent",
-  "sub_agent": "code_writer",
-  "system": "你是一个专业的编程助手。请根据用户需求...",
-  "updated_at": "2026-05-14T10:00:00Z"
+    "_id": "code_agent:sub:code_writer",
+    "agent_id": "code_agent",
+    "node": "sub_agent",
+    "sub_agent": "code_writer",
+    "system": "你是一个专业的编程助手。请根据用户需求...",
+    "updated_at": "2026-05-14T10:00:00Z",
 }
 ```
 
@@ -1097,7 +1097,7 @@ class ConfigCenter:
 
 ```python
 class PromptStore:
-    """提示词存储 — 从 MongoDB 加载，Change Stream 热更新"""
+    """提示词存储 — 从 DocumentStore 加载，ChangeNotifier 热更新"""
 
     def __init__(self):
         self._prompts: dict[str, dict] = {}  # key = "agent_id:node" or "agent_id:sub:sub_name"
@@ -1106,11 +1106,11 @@ class PromptStore:
         key = f"{agent_id}:{sub_name}:{node}" if sub_name else f"{agent_id}:{node}"
         return self._prompts.get(key, {})
 
-    def apply(self, change: dict):
-        doc = change["fullDocument"]
-        key = doc["_id"]
+    def apply(self, data: dict):
+        """ChangeNotifier 回调"""
+        key = data["_id"]
         with threading.RLock():
-            self._prompts[key] = doc
+            self._prompts[key] = data
 
 # 节点中使用
 async def classify(state: ArtiPivotState, runtime: Runtime[AgentContext]):
@@ -1144,38 +1144,38 @@ PUT /admin/prompts/{agent_id}/sub/{sub_name}
 
 **存储结构**：
 
-```javascript
-// MongoDB ratelimit_configs 集合
+```python
+# DocumentStore ratelimit_configs 集合（具体格式由后端决定）
 {
-  "_id": "global_defaults",
-  "scope": "global",
-  "defaults": {
-    "user_rpm": 60,          // 每用户每分钟请求数
-    "agent_rpm": 600,        // 每 Agent 每分钟请求数
-    "tool_rpm": 120,         // 每工具每分钟请求数
-    "tool_timeout_ms": 30000 // 工具超时
-  }
+    "_id": "global_defaults",
+    "scope": "global",
+    "defaults": {
+        "user_rpm": 60,          # 每用户每分钟请求数
+        "agent_rpm": 600,        # 每 Agent 每分钟请求数
+        "tool_rpm": 120,         # 每工具每分钟请求数
+        "tool_timeout_ms": 30000 # 工具超时
+    },
 }
 
 {
-  "_id": "agent:code_agent",
-  "scope": "agent",
-  "agent_id": "code_agent",
-  "overrides": {
-    "user_rpm": 30,           // 代码助手限流更严
-    "tool_timeout_ms": 60000  // 代码执行允许更长时间
-  }
+    "_id": "agent:code_agent",
+    "scope": "agent",
+    "agent_id": "code_agent",
+    "overrides": {
+        "user_rpm": 30,           # 代码助手限流更严
+        "tool_timeout_ms": 60000  # 代码执行允许更长时间
+    },
 }
 
 {
-  "_id": "tool:code_exec",
-  "scope": "tool",
-  "tool_name": "code_exec",
-  "overrides": {
-    "max_concurrent": 5,     // 最大并发数
-    "timeout_ms": 60000,
-    "daily_quota": 1000      // 每日调用配额
-  }
+    "_id": "tool:code_exec",
+    "scope": "tool",
+    "tool_name": "code_exec",
+    "overrides": {
+        "max_concurrent": 5,     # 最大并发数
+        "timeout_ms": 60000,
+        "daily_quota": 1000      # 每日调用配额
+    },
 }
 ```
 
@@ -1233,23 +1233,23 @@ PUT /admin/ratelimits/tool/{tool_name}
 
 ### 10.5 路由规则配置化
 
-意图集、置信度阈值、意图→子代理映射表存储在 MongoDB，变更时触发图重建。
+意图集、置信度阈值、意图→子代理映射表存储在 DocumentStore，变更时通过 ChangeNotifier 触发图重建。
 
 **存储结构**：
 
-```javascript
-// MongoDB routing_configs 集合
+```python
+# DocumentStore routing_configs 集合
 {
-  "_id": "code_agent",
-  "agent_id": "code_agent",
-  "confidence_threshold": 0.7,
-  "intents": [
-    {"name": "code_write", "sub_agent": "code_writer", "description": "代码编写相关"},
-    {"name": "code_review", "sub_agent": "code_reviewer", "description": "代码审查相关"},
-    {"name": "debug", "sub_agent": "code_writer", "description": "调试与修复"}
-  ],
-  "fallback": "fallback",
-  "clarify": "clarify"
+    "key": "code_agent",
+    "agent_id": "code_agent",
+    "confidence_threshold": 0.7,
+    "intents": [
+        {"name": "code_write", "sub_agent": "code_writer", "description": "代码编写相关"},
+        {"name": "code_review", "sub_agent": "code_reviewer", "description": "代码审查相关"},
+        {"name": "debug", "sub_agent": "code_writer", "description": "调试与修复"},
+    ],
+    "fallback": "fallback",
+    "clarify": "clarify",
 }
 ```
 
@@ -1270,10 +1270,10 @@ class RoutingConfig:
     def get_threshold(self, agent_id: str) -> float:
         return self._configs.get(agent_id, {}).get("confidence_threshold", 0.7)
 
-    def apply(self, change: dict):
-        doc = change["fullDocument"]
+    def apply(self, data: dict):
+        """ChangeNotifier 回调 — 路由配置变更时触发图重建"""
         with threading.RLock():
-            self._configs[doc["agent_id"]] = doc
+            self._configs[data["agent_id"]] = data
 
 # route_by_intent 从配置读取
 def route_by_intent(state: ArtiPivotState, runtime: Runtime[AgentContext]) -> str:
@@ -1296,14 +1296,14 @@ PUT /admin/routing/{agent_id}
   "confidence_threshold": 0.8,
   "intents": [
     {"name": "code_write", "sub_agent": "code_writer", "description": "..."},
-    {"name": "refactor", "sub_agent": "code_writer", "description": "重构"}  // 新增意图
+    {"name": "refactor", "sub_agent": "code_writer", "description": "重构"}  # 新增意图
   ]
 }
 ```
 
 ### 10.6 配置管理全景
 
-| 配置项 | MongoDB 集合 | 变更是否重建图 | 管理接口 |
+| 配置项 | DocumentStore 集合 | 变更是否重建图 | 管理接口 |
 |---|---|---|---|
 | 模型配置 | `model_configs` | 否 | `PUT /admin/models/...` |
 | 提示词 | `prompt_configs` | 否 | `PUT /admin/prompts/...` |
@@ -1841,7 +1841,7 @@ cat logs/memory.log | jq 'select(.event == "context_window.summarize")'
 | `INFO` | 关键业务事件 | 请求开始/结束、节点执行、工具调用、LLM 调用 |
 | `WARNING` | 非致命异常 | 模型 fallback 触发、限流拒绝、重试、配置降级 |
 | `ERROR` | 影响请求的异常 | 工具执行失败、模型全部不可用、节点超时 |
-| `CRITICAL` | 影响系统的事件 | MongoDB 连接断开、Checkpointer 不可用、磁盘满 |
+| `CRITICAL` | 影响系统的事件 | DocumentStore 连接断开、Checkpointer 不可用、磁盘满 |
 
 ### 11.4 OpenTelemetry（可选指标导出）
 
@@ -1871,15 +1871,15 @@ if os.getenv("OTEL_ENABLED", "false") == "true":
 
 ### 11.5 审计日志
 
-关键操作写入独立通道 `audit.log` **和** MongoDB `audit_logs` 集合（双重保障）：
+关键操作写入独立通道 `audit.log` **和** DocumentStore `audit_logs` 集合（双重保障）：
 
 ```python
 class AuditLogger:
-    """审计日志 — 文件 + MongoDB 双写"""
+    """审计日志 — 文件 + DocumentStore 双写"""
 
-    def __init__(self, mongo_db):
+    def __init__(self, store: DocumentStore):
         self._file_logger = structlog.get_logger("artipivot.audit")
-        self._db = mongo_db
+        self._store = store
 
     async def log(self, action: str, actor: str, target_type: str,
                   target_id: str, changes: dict | None = None):
@@ -1894,9 +1894,9 @@ class AuditLogger:
             "source_ip": get_client_ip(),
         }
 
-        # 双写：文件（不可篡改） + MongoDB（可查询）
+        # 双写：文件（不可篡改） + DocumentStore（可查询）
         self._file_logger.info("audit", **record)
-        await self._db.audit_logs.insert_one(record)
+        await self._store.put("audit_logs", record["trace_id"] or record["timestamp"], record)
 ```
 
 ### 11.6 日志采集与告警（运维层）
@@ -1926,7 +1926,7 @@ class AuditLogger:
 │  ├─ llm.log:     LLM prompt/response/token/耗时               │
 │  ├─ tool.log:    工具调用参数/结果/耗时                        │
 │  ├─ error.log:   错误 + 完整堆栈                               │
-│  └─ audit.log:   管理操作 + MongoDB 双写                       │
+│  └─ audit.log:   管理操作 + DocumentStore 双写                 │
 ├──────────────────────────────────────────────────────────────┤
 │  可选导出层（不启用不影响核心功能）                               │
 │  ├─ OTel → Prometheus (metrics) / Jaeger (traces)             │
@@ -1948,7 +1948,7 @@ class AuditLogger:
 │   ├── memory.py                 # MemoryLogger — 记忆操作日志（Store/CP/上下文窗口）
 │   ├── llm_logger.py             # LLMMiddleware — LLM 调用拦截记录
 │   ├── tool_logger.py            # LoggingToolNode — 工具调用拦截记录
-│   ├── audit.py                  # AuditLogger — 审计日志（文件 + MongoDB）
+│   ├── audit.py                  # AuditLogger — 审计日志（文件 + DocumentStore）
 │   └── otel.py                   # OTel 可选导出（metrics/traces）
 ```
 
@@ -1981,25 +1981,46 @@ for sub_def in agent_def.sub_agents:
 ```
 
 **node-level error handler**：节点级错误处理，替代全局 try/except：
+- 错误处理器接收 `NodeError`，返回 `Command` 对象控制流转
+- `Command.update` 更新 state，`Command.goto` 指定下一个节点
 
 ```python
-async def on_classify_error(state: ArtiPivotState, error: Exception) -> dict:
-    """classify 节点错误处理"""
+from langgraph.errors import NodeError
+from langgraph.types import Command
+
+def on_classify_error(state: ArtiPivotState, error: NodeError) -> Command:
+    """classify 节点错误处理 — 返回 Command 控制流转"""
     logger.error("classify.error", error=str(error))
 
-    if isinstance(error, TimeoutError):
+    if isinstance(error.original, TimeoutError):
         # 分类超时 → 走 fallback
-        return {"intent": "fallback", "confidence": 0.0}
+        return Command(
+            update={"intent": "fallback", "confidence": 0.0},
+            goto="fallback",
+        )
 
-    if isinstance(error, LLMError):
+    if isinstance(error.original, LLMError):
         # LLM 不可用 → 规则兜底
-        return {"intent": "general", "confidence": 0.5}
+        return Command(
+            update={"intent": "general", "confidence": 0.5},
+            goto="respond",
+        )
 
     # 未知错误 → 兜底
-    return {"intent": "fallback", "confidence": 0.0}
+    return Command(
+        update={"intent": "fallback", "confidence": 0.0},
+        goto="fallback",
+    )
+```
+
+**RetryPolicy**：per-node 重试策略，用于瞬态错误自动重试：
+
+```python
+from langgraph.types import RetryPolicy
 
 root.add_node("classify", classify_fn,
               timeout=10,
+              retry_policy=RetryPolicy(max_attempts=2, retry_on=LLMError),
               error_handler=on_classify_error)
 ```
 
@@ -2041,50 +2062,35 @@ class ModelProvider:
 
 ### 12.4 工具容错
 
-**重试策略**：ToolNode 内置并行执行和错误处理，框架层补充重试：
+**重试策略**：使用 `langgraph.prebuilt.ToolNode` + `RetryPolicy`：
 
 ```python
-class RetryableToolNode:
-    """带重试的 ToolNode 包装"""
+from langgraph.prebuilt import ToolNode
+from langgraph.types import RetryPolicy
 
-    def __init__(self, tools, config_center):
-        self._tools = tools
-        self._config = config_center
+# ToolNode 内置并行执行和错误处理
+tool_node = ToolNode(tools)
 
-    async def __call__(self, state):
-        tool_calls = state["messages"][-1].tool_calls
-        results = []
+# 在 add_node 时配置重试策略（瞬态错误自动重试）
+root.add_node("tools", tool_node,
+              timeout=60,
+              retry_policy=RetryPolicy(
+                  max_attempts=3,
+                  retry_on=(TimeoutError, RateLimitError, ConnectionError),
+              ),
+              error_handler=on_tool_error)
 
-        for tc in tool_calls:
-            max_retries = self._config.get_tool_retries(tc["name"])  # 默认 3
-            backoff_base = self._config.get_tool_backoff(tc["name"]) # 默认 1s
-
-            for attempt in range(max_retries + 1):
-                try:
-                    result = await self._execute_tool(tc)
-                    results.append(result)
-                    break
-                except ToolExecutionError as e:
-                    if attempt < max_retries and self._is_retryable(e):
-                        wait = backoff_base * (2 ** attempt)
-                        logger.warning("tool.retry",
-                            tool=tc["name"], attempt=attempt, wait=wait)
-                        await asyncio.sleep(wait)
-                    else:
-                        logger.error("tool.failed",
-                            tool=tc["name"], error=str(e), attempts=attempt+1)
-                        results.append(ToolMessage(
-                            content=f"工具 {tc['name']} 执行失败: {e}",
-                            tool_call_id=tc["id"],
-                            status="error",
-                        ))
-                        break
-
-        return {"messages": results}
-
-    def _is_retryable(self, error: Exception) -> bool:
-        """仅对瞬态错误重试：超时、限流、网络错误"""
-        return isinstance(error, (TimeoutError, RateLimitError, ConnectionError))
+# 错误处理器：非瞬态错误返回错误消息，不中断子代理循环
+def on_tool_error(state: ArtiPivotState, error: NodeError) -> Command:
+    logger.error("tool.failed", error=str(error))
+    return Command(
+        update={"messages": [ToolMessage(
+            content=f"工具执行失败: {error}",
+            tool_call_id=state["messages"][-1].tool_calls[-1]["id"],
+            status="error",
+        )]},
+        goto="agent",  # 返回 agent 节点处理错误
+    )
 ```
 
 **工具超时**：通过动态配置中心管理：
@@ -2104,27 +2110,29 @@ class RetryableToolNode:
 子代理失败时，主图有兜底路径：
 
 ```python
-# 方式一：error_handler 直接返回兜底消息
-async def on_subagent_error(state: ArtiPivotState, error: Exception) -> dict:
+# 方式一：error_handler 返回 Command，直接返回兜底消息
+def on_subagent_error(state: ArtiPivotState, error: NodeError) -> Command:
     logger.error("subagent.error",
         sub_agent=state["active_agent"], error=str(error))
 
-    return {
-        "messages": [{
+    return Command(
+        update={"messages": [{
             "role": "assistant",
             "content": "抱歉，处理过程中遇到了问题。请稍后重试或换一种方式提问。"
-        }]
-    }
+        }]},
+        goto=END,
+    )
 
 root.add_node("code_writer", code_writer_subgraph,
               timeout=60,
               error_handler=on_subagent_error)
 
 # 方式二：路由到 fallback 子代理（轻量版）
-def route_subagent_error(state: ArtiPivotState) -> str:
-    if state.get("_subagent_failed"):
-        return "fallback"   # 走通用兜底响应
-    return END
+def on_subagent_error_fallback(state: ArtiPivotState, error: NodeError) -> Command:
+    return Command(
+        update={"_subagent_failed": True},
+        goto="fallback",
+    )
 ```
 
 ### 12.6 熔断器
@@ -2239,8 +2247,8 @@ ToolNode
   │
   ▼
 基础设施
-  │  └── MongoDB：重试 + 降级到缓存
-  │  └── Redis：连接池 + 重试
+  │  └── DocumentStore：重试 + 降级到缓存
+  │  └── ChangeNotifier：连接池 + 重试
   │  └── Postgres：连接池 + 重试
 ```
 
@@ -2262,11 +2270,11 @@ ToolNode
 |---|---|---|
 | **不依赖 langchain 高层包** | 仅 `langgraph` + `langchain-core`（传递依赖） | 避免框架锁定，LangGraph 可独立使用 |
 | **模型 fallback** | `ModelProvider` 三级链式降级 | 子代理模型 → 子代理兜底 → 全局兜底，保证可用性 |
-| **动态模型配置** | MongoDB + Change Stream | 模型变更立即生效，无需重建图（模型在 invoke 时动态解析） |
-| **动态提示词** | MongoDB + PromptStore | 节点执行时从配置读取，变更立即生效 |
+| **动态模型配置** | DocumentStore + ChangeNotifier | 模型变更立即生效，无需重建图（模型在 invoke 时动态解析） |
+| **动态提示词** | DocumentStore + PromptStore | 节点执行时从配置读取，变更立即生效 |
 | **限流** | Redis 滑动窗口 + 多维度 | FastAPI 中间件层拦截，不侵入图逻辑 |
 | **可观测性** | 文件日志（8 通道 structlog）+ OTel（可选） | 生产不依赖外部 SaaS；含会话级/记忆操作日志；LangSmith 仅开发环境可选 |
-| **容错** | per-node timeout + error_handler + 三级 fallback + 熔断器 | 利用 LangGraph v1.2 原生能力；模型/工具/子代理各层独立容错 |
+| **容错** | per-node timeout + RetryPolicy + NodeError/Command + 三级 fallback + 熔断器 | 利用 LangGraph v1.2 原生能力；模型/工具/子代理各层独立容错 |
 | 多主 Agent 隔离 | 多个 `CompiledStateGraph` 实例 | 每个主图独立 State / 路由 / 子代理 / 工具 |
 | 会话隔离 | `thread_id` 前缀 `{agent_id}:{session_id}` | 同一 Checkpointer，天然隔离 |
 | 记忆隔离 | Store namespace 前缀 `(agent_id, user_id, ...)` | 同一 Store，按 namespace 隔离 |
@@ -2331,5 +2339,5 @@ sequenceDiagram
 | **P1 — 声明式** | 策略引擎（ReAct/CoT/FC） + YAML 加载 | `agents/strategies/`, `agents/declarative.py` |
 | **P2 — 记忆** | PostgresSaver + PostgresStore + 语义搜索 + 上下文窗口管理 | `memory/` |
 | **P3 — 多主 Agent** | 多主图注册 + Gateway 分发 + 隔离验证 | `gateway/`, `graph/factory.py` |
-| **P4 — 插件 + 动态配置** | MongoDB 注册表 + Change Stream + 图热重建 + ConfigCenter 全量动态配置 | `plugins/`, `config/` |
+| **P4 — 插件 + 动态配置** | DocumentStore 注册表 + ChangeNotifier + 图热重建 + ConfigCenter 全量动态配置 | `plugins/`, `config/` |
 | **P5 — 生产** | FastAPI + 管理 API + CLI + 权限矩阵 + 限流 + 熔断器 + OTel + MCP 适配 | `api/`, `cli/`, `tools/mcp_adapter.py`, `resilience/` |
