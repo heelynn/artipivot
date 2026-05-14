@@ -1,38 +1,72 @@
 # ArtiPivot 框架设计文档
 
-> 版本: 0.2.0 | 日期: 2026-05-14 | 状态: 草稿
+> **版本**: 0.2.0 | **日期**: 2026-05-14 | **状态**: 草稿
 >
 > **配套文档**：[代码架构设计](./ARCHITECTURE.md) | [记忆系统设计](./MEMORY.md)
 
+---
+
+## 目录
+
+- [1. 背景与目标](#1-背景与目标)
+- [2. 架构总览](#2-架构总览)
+- [3. 第一层 — 主路由 Agent](#3-第一层--主路由-agent)
+- [4. 第二层 — 子代理](#4-第二层--子代理)
+- [5. 第三层 — 工具](#5-第三层--工具)
+- [6. 集群架构与插件系统](#6-集群架构与插件系统)
+- [7. 生产级保障](#7-生产级保障)
+- [8. 记忆系统](#8-记忆系统)
+- [9. 动态配置中心](#9-动态配置中心)
+- [10. 目录结构](#10-目录结构)
+- [11. 关键设计决策](#11-关键设计决策)
+- [12. 路线图](#12-路线图)
+
+---
+
 ## 1. 背景与目标
 
-当前 AI Agent 框架（如 OpenClaw、AutoGen、CrewAI）大多采用单体或扁平 Agent 架构，导致：
-- 单一 Agent 职责过重，意图识别与执行逻辑耦合
-- 工具无法跨 Agent 复用
-- 扩展新能力需要侵入式修改核心代码
+> **这一节讲什么**：为什么需要 ArtiPivot，它要解决什么问题，以及指导整个设计的核心原则。
 
-**ArtiPivot** 的目标：构建一个生产级别的多层 Agent 框架，通过 **主路由 Agent → 子代理 → 工具** 三层解耦架构，实现意图识别、任务分发、工具执行的清晰分离，并以可插拔设计作为核心扩展机制。
+### 1.1 行业现状与痛点
 
-### 设计原则
+当前主流 AI Agent（智能体）框架——如 OpenClaw、AutoGen、CrewAI——大多采用"单体"或"扁平"架构，所有能力塞进一个 Agent 中。这带来三个核心问题：
 
-| 原则 | 说明 |
-|------|------|
-| **单一职责** | 每层只负责一件事：主 Agent 识别意图、子代理执行任务、工具提供原子能力 |
-| **可插拔** | 子代理和工具通过注册机制动态加载/卸载，零修改核心代码 |
-| **工具复用** | 工具不绑定特定子代理，任何子代理均可按需引用 |
-| **生产就绪** | 内置可观测性、错误处理、限流、优雅降级 |
+1. **职责混乱**：一个 Agent 同时负责理解用户意图、规划任务、调用工具、组织回答，修改任何一处都可能影响其他功能
+2. **工具无法复用**：工具（如搜索、代码执行）绑死在某个 Agent 内部，其他 Agent 无法使用
+3. **扩展侵入性强**：添加新能力需要修改框架核心代码，风险高、成本大
+
+### 1.2 ArtiPivot 的目标
+
+**ArtiPivot** 定位为**生产级别的多层 Agent 框架**。它通过 **主路由 Agent → 子代理 → 工具** 三层解耦架构，实现：
+
+- **意图识别**（理解用户想要什么）、**任务分发**（把任务交给最合适的执行者）、**工具执行**（调用具体能力）三者清晰分离
+- **可插拔设计**：子代理和工具像 USB 设备一样，插上就能用、拔掉不影响其他功能
+- 所有运行时参数（模型、提示词、限流规则等）**存储在数据库中，通过 API 动态管理，修改立即生效**
+
+### 1.3 设计原则
+
+| 原则 | 含义 | 通俗解释 |
+|------|------|----------|
+| **单一职责** | 每层只负责一件事 | 路由层只管"理解 + 分发"，子代理层只管"执行任务"，工具层只管"做一件事" |
+| **可插拔** | 子代理和工具通过注册机制动态加载/卸载 | 像手机装 App 一样，安装新 Agent 不需要修改系统代码 |
+| **工具复用** | 工具不绑定特定子代理，任何子代理均可按需引用 | 搜索工具被代码助手、研究助手等多个 Agent 共用 |
+| **生产就绪** | 内置可观测性、错误处理、限流、优雅降级 | 从第一天起就按上线标准设计，不是"以后再说" |
+| **高度可配置化** | 所有运行时参数存储在 MongoDB，通过 API 管理 | 修改模型、调整限流不用改代码、不用重启服务 |
+| **低侵入** | 开发者只需实现 `_invoke` 一个方法 | 框架把复杂性藏在内部，开发者只关注业务逻辑 |
 
 ---
 
 ## 2. 架构总览
 
+> **这一节讲什么**：ArtiPivot 的整体结构是什么样的。先看"多个主 Agent 如何并存"，再看"单个主 Agent 内部的三层分工"。
+
 ### 2.1 多主 Agent 架构
 
-系统支持**多个主 Agent 并存且完全隔离**。每个主 Agent 是一个独立的运行时实例，拥有自己的路由逻辑、子代理集、工具集和记忆空间。
+ArtiPivot 支持**多个主 Agent 并存且完全隔离**。可以把它想象成一家公司：每个主 Agent 是一个独立部门，有自己的员工（子代理）和工具，部门之间互不干扰。
 
-**隔离维度**：State（独立 TypedDict）、路由逻辑（独立分类器）、子代理（独立子图集）、工具（独立 ToolNode）、会话记忆（thread_id 前缀隔离）、长期记忆（Store namespace 前缀隔离）、模型（可配不同 provider）。
+**隔离维度**：State（独立数据结构）、路由逻辑（独立分类器）、子代理（独立子图集）、工具（独立工具集）、会话记忆（thread_id 前缀隔离）、长期记忆（Store namespace 前缀隔离）、模型（可配不同供应商）。
 
-统一通过 **Agent Gateway** 按 `agent_id` 分发请求：
+所有请求通过一个 **Agent Gateway**（网关）按 `agent_id` 分发到对应的主 Agent：
 
 ```
 用户请求 → Agent Gateway → 按 agent_id 路由 → Agent A 主图 / Agent B 主图 / Agent C 主图
@@ -40,7 +74,9 @@
 
 每个主图内部仍然是 **路由 → 子代理 → 工具** 三层结构。
 
-### 2.2 三层架构总览（单个主图内部）
+### 2.2 三层架构总览
+
+下面的图展示了单个主 Agent 内部的三层结构。**从上往下看**：用户消息先到第一层（路由 Agent），路由 Agent 判断意图后分发给第二层（某个子代理），子代理在执行过程中调用第三层（具体工具）。
 
 ```mermaid
 graph TB
@@ -93,7 +129,15 @@ graph TB
     style T6 fill:#F5A623,color:#fff,stroke:#D4880F
 ```
 
-### 2.2 数据流全景
+**解读**：路由 Agent 根据用户意图把任务分发给对应子代理（如"代码"→ 代码助手），子代理再按需调用底层工具完成任务。注意工具是被多个子代理**共享**的——这体现了"工具复用"原则。
+
+### 2.3 数据流全景
+
+下面的图描述了一个完整请求的处理过程——从用户发消息到最终返回结果，数据在各层之间如何流动：
+
+1. 用户发消息 → 路由 Agent 识别意图 → 选择子代理
+2. 子代理规划执行步骤 → 从注册表获取工具 → 执行工具循环
+3. 子代理返回结果 → 路由 Agent 格式化后返回用户
 
 ```mermaid
 sequenceDiagram
@@ -126,15 +170,26 @@ sequenceDiagram
 
 ## 3. 第一层 — 主路由 Agent
 
+> **这一节讲什么**：路由 Agent 是系统的"前台接待"——所有用户消息先到这里，它负责理解用户想要什么，然后把任务转交给最合适的子代理。
+
 ### 3.1 职责
 
-路由 Agent 是系统唯一入口，负责：
-1. **意图识别**：解析用户输入，分类到预定义或动态注册的意图
-2. **路由分发**：将任务委派给匹配的子代理
-3. **上下文管理**：维护会话级上下文，传递给子代理
-4. **兜底处理**：无匹配意图时的默认处理策略
+路由 Agent 是系统唯一入口，负责四件事：
+
+| 职责 | 说明 | 类比 |
+|------|------|------|
+| **意图识别** | 解析用户输入，判断属于哪类需求 | 前台判断来客是要"办业务"还是"咨询" |
+| **路由分发** | 将任务委派给匹配的子代理 | 前台把来客引导到对应窗口 |
+| **上下文管理** | 维护会话级上下文，传递给子代理 | 前台把之前的沟通记录一并转交 |
+| **兜底处理** | 无匹配意图时给出默认回复 | 前台对不清楚需求的来客提供帮助 |
 
 ### 3.2 意图识别流程
+
+下面的流程图展示了路由 Agent 判断意图的三种结果：
+
+- **置信度够高**（≥ 阈值）：直接路由到对应子代理
+- **置信度不够**：请用户补充说明
+- **完全没有匹配**：走兜底策略（通用 LLM 回复）
 
 ```mermaid
 flowchart TD
@@ -152,6 +207,13 @@ flowchart TD
 ```
 
 ### 3.3 路由 Agent 接口设计
+
+以下是路由 Agent 的核心接口定义。框架提供基类 `BaseRouter`，开发者可以替换具体实现（比如从 LLM 分类器切换为规则匹配器）。
+
+**核心概念说明**：
+- `Intent`（意图）：用户需求的分类，如"代码"、"数据分析"、"研究"
+- `IntentResult`（意图识别结果）：包含意图类型、置信度（0~1 之间的分数）、提取的关键信息
+- `RouterResponse`（路由响应）：包含识别结果、目标子代理名称、最终回复
 
 ```python
 from abc import ABC, abstractmethod
@@ -206,16 +268,24 @@ class BaseRouter(ABC):
 
 ## 4. 第二层 — 子代理
 
+> **这一节讲什么**：子代理是真正干活的"专员"——它接收路由 Agent 分发的任务，规划执行步骤，调用工具完成工作。本节介绍两种开发子代理的方式（声明式 vs 编程式），以及面向开发者的极简体验设计。
+
 ### 4.1 职责
 
-子代理是实际任务执行者：
-1. **任务规划**：将高层意图分解为可执行步骤
-2. **工具编排**：按计划调用工具，组装结果
-3. **结果聚合**：将多步骤结果合成为最终响应
+子代理是实际任务执行者，负责三件事：
+
+| 职责 | 说明 | 类比 |
+|------|------|------|
+| **任务规划** | 将高层意图分解为可执行步骤 | 把"做个网站"拆解为"写前端 + 写后端 + 测试" |
+| **工具编排** | 按计划调用工具，组装结果 | 按步骤使用不同工具完成任务 |
+| **结果聚合** | 将多步骤结果合成为最终响应 | 把各步骤成果汇总成完整答案 |
 
 ### 4.2 两种子代理注册方式
 
-ArtiPivot 支持两种子代理开发模式并存，覆盖从零代码到完全自定义的全部场景：
+ArtiPivot 支持两种子代理开发模式并存，覆盖从"零代码"到"完全自定义"的全部场景：
+
+- **声明式**：只写配置文件（YAML/JSON），选一个策略引擎（如 ReAct），配置提示词和工具即可——适合大多数标准 Agent
+- **编程式**：写一个 Python 类，实现 `_invoke` 方法——适合需要复杂逻辑的自定义 Agent
 
 ```mermaid
 flowchart TD
@@ -251,7 +321,7 @@ flowchart TD
     style Coded fill:#DAE8FC,stroke:#6C8EBF
 ```
 
-**方式选择指南：**
+**方式选择指南**：
 
 | 场景 | 推荐方式 | 原因 |
 |------|----------|------|
@@ -260,9 +330,9 @@ flowchart TD
 | 快速原型验证 | **声明式** | 几分钟配置一个可用的 Agent |
 | 复杂工具编排（并行调用、结果聚合） | **编程式** | 需要代码控制编排逻辑 |
 
-### 4.3 子代理开发体验（参考 Dify Agent Strategy）
+### 4.3 子代理开发体验
 
-**设计理念**：开发者只需关心"拿到任务怎么执行"，框架负责其余一切。
+**设计理念**：开发者只需关心"拿到任务怎么执行"，框架负责其余一切（注册、注入工具、注入模型、生命周期、健康检查）。
 
 ```mermaid
 flowchart TD
@@ -287,7 +357,9 @@ flowchart TD
     style Framework fill:#DAE8FC,stroke:#6C8EBF
 ```
 
-**子代理项目结构（脚手架生成）：**
+#### 4.3.1 子代理项目结构
+
+通过脚手架命令 `artipivot plugin init` 自动生成：
 
 ```
 plugins/code_assistant/
@@ -298,7 +370,9 @@ plugins/code_assistant/
 └── requirements.txt        # 依赖（可选）
 ```
 
-**agent.yaml — 声明式配置：**
+#### 4.3.2 agent.yaml — 声明式配置
+
+YAML 文件定义子代理的身份、意图、工具需求和参数。模型配置首次启动后由 MongoDB 管理，运行时变更无需重启。
 
 ```yaml
 identity:
@@ -338,10 +412,52 @@ parameters:
       zh_Hans: 允许的编程语言
 
 model:
-  required: true          # 是否需要 LLM 模型
+  required: true
+  provider: anthropic
+  name: claude-sonnet-4-6
+  fallback:               # 兜底模型（主模型不可用时自动切换）
+    provider: anthropic
+    name: claude-haiku-4-5-20251001
+
+# 注：模型配置首次启动后由 MongoDB 管理，通过 REST API 动态更新
+# 运行时变更无需重启，无需重建图
 ```
 
-**code_assistant.py — 开发者只需写这个：**
+#### 4.3.3 模型配置层级
+
+每个子代理可以独立配置 LLM（大语言模型），支持**三级兜底**——主模型挂了自动切换备选，备选也挂了还有全局兜底。模型配置存储在 MongoDB，通过 REST API 动态管理，变更立即生效（详见 [ARCHITECTURE.md](./ARCHITECTURE.md) 第 9 节）。
+
+| 层级 | 配置位置 | 作用 | 管理方式 |
+|------|----------|------|----------|
+| 子代理模型 | MongoDB → `{agent_id}:{sub_name}` | 该子代理专用模型 | `PUT /admin/models/{agent_id}/{sub_agent}` |
+| 子代理兜底 | 同上 → `fallback` 字段 | 子代理模型失败时降级 | 同上 |
+| 全局兜底 | MongoDB → `global` | 所有兜底都失败时的最后防线 | `PUT /admin/models/global/fallback` |
+
+首次启动时从 YAML seed 文件加载初始配置，之后所有变更通过 REST API 管理。
+
+```yaml
+# config/seed/models.yaml — 仅首次启动使用
+global:
+  fallback_model:
+    provider: openai
+    name: gpt-4o
+
+agents:
+  code_agent:
+    provider: anthropic
+    name: claude-sonnet-4-6
+    sub_agents:
+      code_writer:
+        provider: anthropic
+        name: claude-sonnet-4-6
+        fallback:
+          provider: anthropic
+          name: claude-haiku-4-5-20251001
+```
+
+#### 4.3.4 code_assistant.py — 开发者核心代码
+
+开发者只需实现 `_invoke` 一个方法。框架自动注入模型、工具、配置和对话历史——开发者像搭积木一样组合使用即可。
 
 ```python
 from artipivot import SubAgent, SubAgentContext
@@ -381,18 +497,20 @@ class CodeAssistant(SubAgent):
         return f"任务完成。代码已写入 output.py"
 ```
 
-**开发者体验对比：**
+#### 4.3.5 开发者体验对比
 
-| 维度 | 旧设计（学院派） | 新设计（参考 Dify） |
-|------|------------------|---------------------|
-| 必须理解的概念 | BaseSubAgent、ToolRegistry、on_register、on_unregister | SubAgent、_invoke、context |
+| 维度 | 传统框架 | ArtiPivot（参考 Dify 设计） |
+|------|----------|-----------------------------|
+| 必须理解的概念 | 基类、注册表、生命周期回调等 3-4 个接口 | SubAgent、`_invoke`、context 三个概念 |
 | 配置方式 | 写 Python 类属性 | 写 YAML 声明 |
-| 工具获取 | 手动从 registry 查找 | `context.tools.get("名字")` |
+| 工具获取 | 手动从注册表查找 | `context.tools.get("名字")` |
 | 模型调用 | 自己管理 LLM 客户端 | `context.model.chat()` |
 | 生命周期 | 实现 3-4 个方法 | 只写 `_invoke` |
 | 脚手架 | 无 | `artipivot plugin init` |
 
 ### 4.4 脚手架与调试
+
+框架提供 CLI 命令，覆盖开发、测试、打包、发布的完整流程：
 
 ```bash
 # 1. 一键生成子代理模板
@@ -412,9 +530,15 @@ artipivot plugin publish ./code_assistant-1.0.0.artipivot-plugin.zip
 
 ### 4.5 声明式子代理（零代码注册）
 
-**核心思路**：大多数 Agent 就是「提示词 + 策略 + 工具」的组合，不需要写代码。
+> **这一节讲什么**：大多数 Agent 就是"提示词 + 策略 + 工具"的组合，不需要写代码。声明式子代理只需选策略、配参数、绑工具，几分钟就能上线。
 
-框架内置三种 Agent 策略引擎，声明式子代理只需选择策略、配置参数：
+**核心思路**：框架内置三种 Agent 策略引擎，声明式子代理只需选择策略、配置参数。
+
+下图展示了三种策略引擎的工作方式：
+
+- **ReAct**（思考-行动-观察循环）：Agent 先"想"要做什么，然后"做"（调用工具），再"观察"结果，循环直到完成任务
+- **CoT**（链式推理）：Agent 按步骤推理，逐步分解问题
+- **Function Calling**（函数调用）：模型直接决定调用哪个工具及参数
 
 ```mermaid
 flowchart TD
@@ -444,7 +568,9 @@ flowchart TD
     style Engine fill:#4A90D9,color:#fff
 ```
 
-**声明式子代理 — JSON 配置示例：**
+#### 4.5.1 声明式子代理 — JSON 配置示例
+
+以下是一个客服助手的完整声明式配置。配置后框架自动实例化 Agent 并更新路由表，新意图立即生效。
 
 ```json
 {
@@ -481,7 +607,9 @@ flowchart TD
 }
 ```
 
-**通过 API 注册（零代码、热生效）：**
+#### 4.5.2 注册方式
+
+支持三种注册方式，注册后框架自动完成：解析配置 → 写入 MongoDB → Change Stream 广播 → 各节点加载 → 路由表更新。
 
 ```bash
 # 方式一：上传 JSON 文件
@@ -495,14 +623,9 @@ curl -X POST http://localhost:8000/api/v1/agents \
 # 方式三：在管理后台 UI 中可视化配置（Phase 3）
 ```
 
-注册后框架自动：
-1. 解析 JSON → 校验配置完整性
-2. 写入 MongoDB `plugins` 集合
-3. Change Stream 通知所有节点
-4. 各节点加载配置 → 按策略引擎实例化 Agent
-5. 路由表更新 → 新意图立即生效
+#### 4.5.3 声明式 vs 编程式运行时对比
 
-**声明式 vs 编程式运行时对比：**
+下图展示了两种子代理在运行时的区别：声明式由框架的策略引擎驱动，编程式由开发者的自定义逻辑驱动。但无论哪种方式，最终都调用工具并返回结果。
 
 ```mermaid
 flowchart LR
@@ -534,7 +657,7 @@ flowchart LR
     style PE fill:#4A90D9,color:#fff
 ```
 
-**声明式子代理可配置项：**
+**声明式子代理可配置项**：
 
 | 配置项 | 说明 | 示例 |
 |--------|------|------|
@@ -545,20 +668,27 @@ flowchart LR
 | `model` | 模型配置（provider / name / temperature） | `gpt-4o` |
 | `tools` | 绑定的工具列表（按名称引用） | `["order_query"]` |
 | `prompt.system` | 系统提示词 | 角色设定 + 规则 |
-| `prompt.few_shots` | Few-shot 示例 | 问答对列表 |
+| `prompt.few_shots` | Few-shot 示例（给模型展示几个问答范例） | 问答对列表 |
 
 ---
 
 ## 5. 第三层 — 工具
 
+> **这一节讲什么**：工具是系统中最小的能力单元——每个工具只做一件事（搜索、执行代码、读文件等），但可以被子代理自由组合使用。本节介绍工具的开发方式、注册方式，以及更高级的"Pipeline 工具"（工具编排工具）。
+
 ### 5.1 职责
 
 工具提供 **原子化、无状态** 的执行能力：
+
 - 每个工具做一件事，做好一件事
 - 不包含业务逻辑，仅封装外部交互
-- 可被任意子代理引用
+- 可被任意子代理引用——工具不"属于"某个子代理
 
 ### 5.2 工具可插拔架构
+
+下图展示了工具注册表（ToolRegistry）如何统一管理四种来源的工具：内置工具、MCP 协议工具、自定义工具、Pipeline 工具。所有工具注册到中心注册表后，子代理按名称获取使用。
+
+**MCP**（Model Context Protocol）是一个开放协议，允许外部服务以标准化方式提供工具能力。
 
 ```mermaid
 flowchart TD
@@ -566,6 +696,7 @@ flowchart TD
         TR_C["中心注册表"]
         TR_M["MCP 适配器"]
         TR_Cust["自定义工具"]
+        TR_Pipe["Pipeline 构建器"]
     end
 
     subgraph BuiltIn["内置工具"]
@@ -588,9 +719,15 @@ flowchart TD
         C3["你的自定义工具"]
     end
 
+    subgraph Pipeline["Pipeline Tool（工具编排）"]
+        P1["YAML 声明式<br/>搜索→摘要→翻译"]
+        P2["Python 编程式<br/>自定义流程图"]
+    end
+
     BuiltIn --> TR_C
     MCP --> TR_M --> TR_C
     Custom --> TR_Cust --> TR_C
+    Pipeline --> TR_Pipe --> TR_C
 
     subgraph Consumers["工具消费者"]
         SA1["子代理 A"]
@@ -604,13 +741,14 @@ flowchart TD
     style BuiltIn fill:#D5E8D4,stroke:#82B366
     style MCP fill:#DAE8FC,stroke:#6C8EBF
     style Custom fill:#E1D5E7,stroke:#9673A6
+    style Pipeline fill:#F8CECC,stroke:#B85450
 ```
 
-### 5.3 工具开发体验（参考 Dify Tool Plugin）
+### 5.3 工具开发体验
 
-**设计理念**：工具 = **YAML 声明参数** + **一个 `_invoke` 方法**。零学习成本。
+> **设计理念**：工具 = **YAML 声明参数** + **一个 `_invoke` 方法**。与子代理一样，开发者只需关注核心逻辑。
 
-**工具项目结构（脚手架生成）：**
+#### 5.3.1 工具项目结构
 
 ```
 plugins/web_search/
@@ -623,7 +761,9 @@ plugins/web_search/
 └── requirements.txt
 ```
 
-**provider.yaml — 工具提供者配置：**
+#### 5.3.2 provider.yaml — 工具提供者配置
+
+定义工具的身份信息和凭证需求。用户安装工具时填写凭证（如 API 密钥）。
 
 ```yaml
 identity:
@@ -648,7 +788,9 @@ tools:
   - tools/search.yaml       # 引用具体工具定义
 ```
 
-**tools/search.yaml — 工具参数声明（替代 Python 代码中的类型标注）：**
+#### 5.3.3 tools/search.yaml — 工具参数声明
+
+用 YAML 声明工具的输入输出参数，替代 Python 代码中的类型标注。LLM 通过这个描述理解工具能做什么、需要什么参数。
 
 ```yaml
 identity:
@@ -678,7 +820,9 @@ output:
   description: 搜索结果文本
 ```
 
-**web_search.py — 开发者只需写这个：**
+#### 5.3.4 web_search.py — 开发者核心代码
+
+与子代理一样，开发者只需实现 `_invoke` 方法。框架自动注入参数、凭证和日志。
 
 ```python
 from artipivot import Tool, ToolContext
@@ -689,8 +833,6 @@ class WebSearch(Tool):
 
     async def _invoke(self, context: ToolContext) -> str:
         """
-        核心方法：接收参数，返回结果字符串
-
         框架自动注入：
         - context.params      YAML 中声明的参数（已校验、已类型转换）
         - context.credentials 用户配置的凭证（api_key 等）
@@ -707,9 +849,11 @@ class WebSearch(Tool):
         return format_results(results)
 ```
 
-### 5.4 OpenAPI 快速导入（参考 Dify）
+### 5.4 OpenAPI 快速导入
 
-除了 Python 工具，还支持直接粘贴 **OpenAPI 3.0 Schema** 创建工具 — 零代码：
+除了 Python 工具，还支持直接粘贴 **OpenAPI 3.0 Schema**（一种描述 REST API 的标准格式）创建工具——零代码。
+
+框架自动解析 OpenAPI → 生成 YAML → 注册为可用工具。以下示例定义了一个天气查询接口：
 
 ```json
 {
@@ -732,44 +876,166 @@ class WebSearch(Tool):
 }
 ```
 
-框架自动解析 OpenAPI → 生成 YAML → 注册为可用工具，无需写一行代码。
+### 5.5 Pipeline Tool（工具编排工具）
 
-### 5.5 三种工具开发方式对比
+> **这一节讲什么**：有时一个任务需要多个工具按固定顺序执行（如"搜索 → 摘要 → 翻译"）。Pipeline Tool 把这种固定流程封装为一个独立工具，对子代理而言就是一个普通 tool，内部的多步骤编排是黑盒。
+
+#### 5.5.1 概念
+
+下图展示了一个 Pipeline 的内部结构：输入依次经过三个工具，最终输出结果。对外，它看起来就是一个叫 `search_and_translate` 的普通工具。
 
 ```mermaid
-flowchart TD
-    subgraph Easy["方式一：OpenAPI 导入（零代码）"]
-        OA["粘贴 OpenAPI JSON"] --> AutoGen["自动生成工具"]
+flowchart LR
+    Input["用户输入"] --> Step1["Tool A<br/>（搜索）"]
+    Step1 --> Step2["Tool B<br/>（摘要）"]
+    Step2 --> Step3["Tool C<br/>（翻译）"]
+    Step3 --> Output["最终输出"]
+
+    subgraph PipelineTool["Pipeline Tool（对外是一个 tool）"]
+        Step1
+        Step2
+        Step3
     end
 
-    subgraph Normal["方式二：YAML + Python（推荐）"]
-        Y["写 YAML 声明参数"] --> P["实现 _invoke 方法"]
-        P --> Reg["自动注册"]
-    end
-
-    subgraph Advanced["方式三：MCP 协议（外部服务）"]
-        MCP["外部 MCP Server"] --> Adapter["MCP 适配器"]
-        Adapter --> Reg
-    end
-
-    AutoGen --> Store["存入 MongoDB<br/>全集群可用"]
-    Reg --> Store
-
-    style Easy fill:#D5E8D4,stroke:#82B366
-    style Normal fill:#DAE8FC,stroke:#6C8EBF
-    style Advanced fill:#E1D5E7,stroke:#9673A6
+    style PipelineTool fill:#E1D5E7,stroke:#9673A6
 ```
+
+#### 5.5.2 声明式 Pipeline（YAML 配置，零代码）
+
+开发者通过 YAML 描述固定流程，框架自动构建 LangGraph 线性图并编译为工具。以下是一个"搜索 → 摘要 → 翻译"三步 Pipeline 的配置：
+
+```yaml
+# plugins/search_translate/pipeline.yaml
+identity:
+  name: search_and_translate
+  description:
+    human:
+      zh_Hans: 搜索并翻译
+    llm: 搜索互联网内容，总结摘要后翻译为中文
+
+parameters:
+  - name: query
+    type: string
+    required: true
+    description: 搜索关键词
+
+pipeline:
+  steps:
+    - name: search
+      tool: web_search
+      input: "{query}"
+      output: search_result
+
+    - name: summarize
+      tool: summarize
+      input: "{search_result}"
+      output: summary
+
+    - name: translate
+      tool: translate
+      input: "{summary}"
+      params:
+        target_lang: zh
+      output: translated
+
+  output: "{translated}"
+```
+
+框架处理流程：
+
+```
+pipeline.yaml → PipelineToolBuilder → StateGraph（线性图）→ compile → @tool → 注册到 ToolRegistry
+```
+
+子代理调用方式与普通工具完全一致：
+
+```python
+tool = context.tools.get("search_and_translate")
+result = await tool.run(query="LangGraph architecture")
+```
+
+#### 5.5.3 条件分支 Pipeline
+
+固定流程支持简单条件判断，框架将其转为 LangGraph 的条件边。例如：当搜索结果太长时先摘要再翻译，否则直接翻译。
+
+```yaml
+pipeline:
+  steps:
+    - name: fetch
+      tool: web_search
+      input: "{query}"
+      output: raw_result
+
+    - name: check_length
+      type: condition
+      if: "len({raw_result}) > 5000"
+      then: summarize
+      else: translate
+
+    - name: summarize
+      tool: summarize
+      input: "{raw_result}"
+      output: processed
+
+    - name: translate
+      tool: translate
+      input: "{raw_result}"
+      output: processed
+      params:
+        target_lang: zh
+
+  output: "{processed}"
+```
+
+#### 5.5.4 编程式 Pipeline
+
+需要更复杂编排逻辑时，用 Python 直接构建 StateGraph：
+
+```python
+from artipivot import PipelineTool, PipelineContext
+
+class SearchTranslatePipeline(PipelineTool):
+    """搜索 + 翻译流水线 — 编程式"""
+
+    def build_graph(self) -> CompiledStateGraph:
+        builder = StateGraph(self.state_schema)
+
+        async def step_search(state, runtime: Runtime):
+            tool = runtime.context.tools["web_search"]
+            result = await tool.ainvoke({"query": state["input"]})
+            return {"search_result": result}
+
+        async def step_translate(state, runtime: Runtime):
+            tool = runtime.context.tools["translate"]
+            result = await tool.ainvoke({
+                "text": state["search_result"],
+                "target_lang": "zh"
+            })
+            return {"output": result}
+
+        builder.add_node("search", step_search)
+        builder.add_node("translate", step_translate)
+        builder.add_edge(START, "search")
+        builder.add_edge("search", "translate")
+        builder.add_edge("translate", END)
+
+        return builder.compile()
+```
+
+### 5.6 四种工具开发方式对比
 
 | 方式 | 适合场景 | 开发量 | 灵活性 |
 |------|----------|--------|--------|
-| **OpenAPI 导入** | 已有 REST API 的服务 | 零代码 | 低（仅支持 HTTP 调用） |
+| **OpenAPI 导入** | 已有 REST API 的服务 | 零代码 | 低（仅 HTTP） |
 | **YAML + Python** | 自定义逻辑、数据处理 | YAML + 一个方法 | 高 |
 | **MCP 协议** | 外部服务、第三方 MCP Server | 配置连接参数 | 中 |
+| **Pipeline Tool** | 多工具固定流程编排 | YAML 声明 / Python | 中（支持条件分支） |
 
-### 5.6 工具在子代理中的使用方式
+### 5.7 工具在子代理中的使用方式
+
+工具的使用 API 极其简洁——按名称取用，直接调用：
 
 ```python
-# 子代理中调用工具 — 极简 API
 class CodeAssistant(SubAgent):
     async def _invoke(self, context: SubAgentContext) -> str:
         # 按名称取工具
@@ -782,9 +1048,9 @@ class CodeAssistant(SubAgent):
         return f"搜索结果：{result}"
 ```
 
-### 5.7 零代码工具注册汇总
+### 5.8 零代码工具注册汇总
 
-工具支持三种零代码注册方式，注册后立即全集群生效：
+工具支持三种零代码注册方式，注册后立即全集群生效。下图展示了从注册到就绪的完整流程：
 
 ```mermaid
 flowchart TD
@@ -830,9 +1096,15 @@ curl -X POST http://localhost:8000/api/v1/tools \
 
 ## 6. 集群架构与插件系统
 
+> **这一节讲什么**：生产环境下，ArtiPivot 以多节点集群方式运行。所有插件（子代理/工具）的元数据存储在 MongoDB，各节点通过 Change Stream（MongoDB 的实时数据变更通知机制）自动同步。本节介绍集群架构、数据模型、插件热更新流程。
+
 ### 6.1 集群部署架构
 
-生产环境下，ArtiPivot 以多节点集群方式运行。所有插件元数据（子代理 / 工具定义）持久化到 **MongoDB**，各节点通过 **Change Stream** 实时同步。
+下图展示了生产环境的部署结构：
+
+- **负载均衡**（Nginx / AWS ALB）：把用户请求均匀分配到多个节点
+- **ArtiPivot 节点**：每个节点运行完整的路由 + 子代理 + 工具
+- **持久化层**：MongoDB（插件注册表 + Change Stream）、Redis（本地缓存 + 分布式锁）、制品仓库（S3 / GCS / MinIO，存储插件代码包）
 
 ```mermaid
 flowchart TB
@@ -880,7 +1152,15 @@ flowchart TB
 
 ### 6.2 MongoDB 存储模型
 
-插件定义持久化到 MongoDB 的三个核心集合：
+插件定义持久化到 MongoDB 的三个核心集合（相当于三张表）：
+
+| 集合 | 作用 |
+|------|------|
+| `plugins` | 全局插件注册表，存储元数据、版本、制品地址 |
+| `plugin_assignments` | 控制哪些插件在哪些节点组启用，支持灰度发布 |
+| `health_checks` | 各节点上报插件健康状态，用于故障摘除 |
+
+下图展示了三个集合之间的关系：
 
 ```mermaid
 erDiagram
@@ -924,15 +1204,7 @@ erDiagram
     PLUGINS ||--o{ HEALTH_CHECKS : "各节点健康状态"
 ```
 
-**集合职责：**
-
-| 集合 | 作用 |
-|------|------|
-| `plugins` | 全局插件注册表，存储元数据、版本、制品地址 |
-| `plugin_assignments` | 控制哪些插件在哪些节点组启用，支持灰度发布 |
-| `health_checks` | 各节点上报插件健康状态，用于故障摘除 |
-
-**MongoDB 文档示例（`plugins` 集合）：**
+**MongoDB 文档示例**（`plugins` 集合中的一条记录）：
 
 ```json
 {
@@ -956,6 +1228,8 @@ erDiagram
 ```
 
 ### 6.3 插件注入全流程
+
+下图展示了一个新插件从上传到全集群就绪的完整流程。关键步骤：管理员上传 → 存储制品 → 写入 MongoDB → Change Stream 触发各节点 → 节点下载安装 → 健康检查通过 → 开始接收流量。
 
 ```mermaid
 sequenceDiagram
@@ -989,6 +1263,8 @@ sequenceDiagram
 
 ### 6.4 节点启动与同步流程
 
+节点启动时执行全量同步（从 MongoDB 读取所有插件 → 下载安装 → 注册到本地缓存），然后启动 Change Stream 监听，进入实时热更新循环。
+
 ```mermaid
 flowchart TD
     Start["节点启动"] --> Boot["引导阶段"]
@@ -1020,6 +1296,8 @@ flowchart TD
 ```
 
 ### 6.5 插件注册表接口（集群版）
+
+以下是集群级插件注册表的核心接口。它以 MongoDB 为唯一数据源，写入走 MongoDB（管理 API），读取走本地缓存优先 + MongoDB 兜底，热更新走 Change Stream。
 
 ```python
 from abc import ABC, abstractmethod
@@ -1117,11 +1395,15 @@ class ClusterPluginRegistry:
 
 ### 6.6 插件加载来源（三层降级）
 
+插件加载按优先级从高到低，保证性能的同时兼顾可靠性：
+
 | 优先级 | 来源 | 适用场景 | 说明 |
 |--------|------|----------|------|
 | 1 | **本地缓存（Redis）** | 热路径 | 毫秒级响应，定期校验健康状态 |
 | 2 | **MongoDB + 制品仓库** | 冷启动 / 缓存未命中 | 全量同步，Change Stream 热更新 |
 | 3 | **Entry Points（内置）** | 基础能力 | 内置插件随镜像发布，无需外部存储 |
+
+下图展示了获取插件实例时的降级逻辑：Redis 缓存命中且健康 → 直接返回；否则查询 MongoDB → 下载制品 → 安装实例化 → 写入缓存。
 
 ```mermaid
 flowchart LR
@@ -1143,9 +1425,9 @@ flowchart LR
 
 ### 6.7 灰度发布与故障摘除
 
-**灰度发布（金丝雀部署）：**
+**灰度发布（金丝雀部署）**：
 
-通过 `plugin_assignments` 集合控制：
+通过 `plugin_assignments` 集合控制新版本插件只在部分节点生效。例如先在 `canary` 节点组启用，观察无问题后全量发布：
 
 ```json
 {
@@ -1157,7 +1439,9 @@ flowchart LR
 }
 ```
 
-**故障摘除（熔断器）：**
+**故障摘除（熔断器）**：
+
+当插件连续失败超过阈值时，熔断器自动打开，停止调用该插件并告警。等待冷却期后进入半开状态，试探性调用一次，成功则恢复，失败则继续熔断。
 
 ```mermaid
 flowchart TD
@@ -1182,36 +1466,78 @@ flowchart TD
 
 ## 7. 生产级保障
 
+> **这一节讲什么**：一个系统要上线，光有功能不够，还需要"生产级保障"——能监控运行状态（可观测性）、能防止攻击和滥用（安全）、出错了能自动恢复（容错）。本节分别介绍这三个方面。
+
 ### 7.1 可观测性架构
+
+> 详细设计见 [ARCHITECTURE.md](./ARCHITECTURE.md) 第 11 节
+
+**核心原则：生产不依赖任何外部 SaaS 服务。** LangSmith（LangChain 提供的调试工具）仅在本地开发/单测时作为可选调试工具，通过环境变量控制，生产环境禁止启用。
+
+ArtiPivot 使用**自建文件日志系统**：8 个通道各自独立的日志文件，使用结构化 JSON 格式，支持自动轮转（按大小/日期切割）。
+
+#### 7.1.1 八通道日志
+
+| 通道 | 文件 | 内容 | 保留 |
+|---|---|---|---|
+| 主日志 | `artipivot.log` | 所有组件 INFO+ 合并流 | 30 天 |
+| 请求 trace | `trace.log` | 每个请求完整生命周期（节点执行/耗时/路由） | 7 天 |
+| **会话** | **`session.log`** | **按 thread_id 串联多轮请求 + 每轮记忆状态** | 30 天 |
+| **记忆** | **`memory.log`** | **Store 读写 + Checkpointer + 上下文窗口操作** | 30 天 |
+| LLM 调用 | `llm.log` | prompt / response / token / 模型 / 耗时 | 30 天 |
+| 工具调用 | `tool.log` | 工具名 / 参数 / 结果 / 耗时 | 14 天 |
+| 错误 | `error.log` | 仅 ERROR+，含完整堆栈 | 90 天 |
+| 审计 | `audit.log` + MongoDB | 配置变更、插件操作、权限操作 | 365 天 |
+
+**会话级日志（session.log）** 按 `thread_id`（会话标识）串联多轮请求，每轮记录：用户消息 → 记忆快照（本轮开始时有什么记忆）→ 路由结果 → 子代理 → 记忆变更（本轮写了什么新记忆）→ 响应。
+
+**记忆操作日志（memory.log）** 记录三层记忆的所有读写操作：Checkpoint 加载/保存、上下文窗口压缩/截断、Store 读取/语义搜索/写入。用于排查"为什么 Agent 不知道 X"。
+
+详细设计见 [ARCHITECTURE.md](./ARCHITECTURE.md) 第 11.3.7 - 11.3.8 节。
+
+#### 7.1.2 日志架构
+
+下图展示了日志的采集与存储链路：框架内部通过 structlog（结构化日志库）自动采集，写入 8 个日志文件，再通过 Filebeat 等工具导入 Elasticsearch/Loki 实现全文检索和告警。OpenTelemetry 和 LangSmith 为可选扩展。
 
 ```mermaid
 flowchart TD
-    subgraph Spans["OpenTelemetry 链路追踪"]
-        S1["router.classify<br/>路由分类耗时"]
-        S2["router.dispatch<br/>分发耗时"]
-        S3["subagent.execute<br/>子代理执行耗时"]
-        S4["tool.execute<br/>工具调用耗时"]
+    subgraph App["框架内部"]
+        GW["Gateway"]
+        Node["图节点"]
+        Tool["工具"]
+        LLM["LLM 调用"]
     end
 
-    Spans --> OTel["OpenTelemetry Collector"]
-    OTel --> Jaeger["Jaeger / Tempo<br/>（分布式链路追踪）"]
-    OTel --> Prometheus["Prometheus<br/>（指标监控）"]
-    OTel --> Loki["Loki / ELK<br/>（日志聚合）"]
+    App --> structlog["structlog<br/>（contextvars 自动传播）"]
+    structlog --> Files["文件日志（8 通道）"]
+    structlog -.->|可选| OTel["OpenTelemetry"]
+    structlog -.->|仅开发环境| LangSmith["LangSmith"]
 
-    subgraph Metrics["核心指标"]
-        M1["意图分类延迟_ms"]
-        M2["子代理执行耗时_ms"]
-        M3["工具调用延迟_ms"]
-        M4["工具错误率"]
-        M5["意图分布统计"]
-        M6["活跃子代理数"]
-    end
+    Files --> Filebeat["Filebeat / Fluent Bit"]
+    Filebeat --> ES["Elasticsearch / Loki<br/>（全文检索）"]
+    Filebeat --> Alert["Alertmanager<br/>（error.log 告警）"]
 
-    style Spans fill:#E8D5B7,stroke:#B8860B
-    style OTel fill:#DAE8FC,stroke:#6C8EBF
+    OTel -.-> Prometheus["Prometheus"]
+    OTel -.-> Jaeger["Jaeger"]
+
+    style Files fill:#50C878,color:#fff
+    style LangSmith fill:#999,color:#fff
+    style OTel fill:#999,color:#fff
 ```
 
+**日志级别规范**：
+
+| 级别 | 使用场景 |
+|---|---|
+| `DEBUG` | LLM 完整 prompt/response（生产默认关闭） |
+| `INFO` | 请求开始/结束、节点执行、工具调用、LLM 调用 |
+| `WARNING` | 模型 fallback 触发、限流拒绝、重试、配置降级 |
+| `ERROR` | 工具执行失败、模型全部不可用、节点超时 |
+| `CRITICAL` | MongoDB 连接断开、Checkpointer 不可用、磁盘满 |
+
 ### 7.2 安全模型
+
+系统设置了五层安全防护，请求从左到右依次经过：
 
 ```mermaid
 flowchart LR
@@ -1220,7 +1546,7 @@ flowchart LR
         L1["1. 输入清洗<br/>（注入防护、XSS）"]
         L2["2. 工具权限矩阵<br/>（子代理 ↔ 工具白名单）"]
         L3["3. 沙箱执行<br/>（代码执行隔离）"]
-        L4["4. 限流控制<br/>（按用户、按工具）"]
+        L4["4. 限流控制<br/>（按用户、按 Agent、按工具，动态配置）"]
         L5["5. 审计日志<br/>（全链路操作记录）"]
     end
 
@@ -1229,7 +1555,7 @@ flowchart LR
     style Security fill:#FFE6E6,stroke:#E74C3C
 ```
 
-**工具权限矩阵示例：**
+**工具权限矩阵示例**：
 
 | 子代理 | 网页搜索 | 代码执行 | 文件读写 | 数据库 |
 |--------|----------|----------|----------|--------|
@@ -1237,31 +1563,61 @@ flowchart LR
 | 数据分析师 | - | - | ✅ | ✅ |
 | 研究员 | ✅ | - | ✅ | - |
 
-### 7.3 错误处理策略
+### 7.3 错误处理与容错
+
+> 详细设计见 [ARCHITECTURE.md](./ARCHITECTURE.md) 第 12 节
+
+**各层独立容错**：不同层级使用不同的容错策略，确保局部故障不会拖垮整个系统。
+
+| 层 | 容错机制 | LangGraph 原生能力 |
+|---|---|---|
+| 模型调用 | 三级 fallback + 重试（指数退避） | — |
+| classify 节点 | per-node timeout + error_handler | `add_node(..., timeout=, error_handler=)` |
+| 子代理节点 | per-node timeout + error_handler → fallback 响应 | 同上 |
+| 工具执行 | 瞬态错误重试 + 超时 + 错误 ToolMessage | ToolNode |
+| 外部依赖 | 熔断器（per-provider 三状态机） | — |
+| 基础设施 | MongoDB/Redis/Postgres 连接池 + 重试 | — |
+
+下图展示了不同类型错误的处理路径：
 
 ```mermaid
 flowchart TD
     Error["发生错误"] --> Type{"错误类型？"}
-    Type -->|工具失败| Retry["重试（退避策略<br/>最多 3 次）"]
-    Type -->|子代理超时| FallbackSA["切换到简化子代理<br/>或兜底响应"]
+    Type -->|工具失败| Retry["重试（指数退避<br/>瞬态错误最多 3 次）"]
+    Type -->|子代理超时| FallbackSA["error_handler →<br/>兜底响应"]
     Type -->|意图不明确| Clarify["请求用户澄清"]
-    Type -->|系统错误| Circuit["触发熔断<br/>→ 优雅降级"]
+    Type -->|模型不可用| ModelFB["三级 fallback<br/>子代理模型 → 兜底 → 全局"]
+    Type -->|系统错误| Circuit["熔断器打开<br/>→ 优雅降级"]
 
-    Retry -->|"仍然失败"| Circuit
-    FallbackSA --> Log["记录日志 + 告警"]
-    Clarify --> Log
+    Retry -->|"仍然失败"| ErrMsg["返回错误 ToolMessage<br/>不中断子代理循环"]
+    FallbackSA --> Log["structlog 记录 + OTel 指标"]
+    ModelFB --> Log
     Circuit --> Log
+    ErrMsg --> Log
 
     style Error fill:#E74C3C,color:#fff
     style Retry fill:#F5A623,color:#fff
     style Circuit fill:#E74C3C,color:#fff
+    style ModelFB fill:#4A90D9,color:#fff
+```
+
+**容错参数动态配置**：超时和重试参数存储在 MongoDB，通过 API 动态调整，无需重启服务。
+
+```bash
+# 超时配置
+PUT /admin/ratelimits/agent/{agent_id}
+{ "tool_timeout_ms": 60000, "subagent_timeout_ms": 120000 }
+
+# 工具重试配置
+PUT /admin/ratelimits/tool/{tool_name}
+{ "max_retries": 3, "backoff_base_ms": 1000 }
 ```
 
 ---
 
 ## 8. 记忆系统
 
-> 详细设计见 [MEMORY.md](./MEMORY.md)
+> **这一节讲什么**：Agent 需要"记忆"才能提供连贯的服务——比如记住用户的偏好、之前的对话内容。ArtiPivot 的记忆系统分三层：工作记忆（当前调用）、会话记忆（对话历史）、长期记忆（用户画像和知识积累）。详细设计见 [MEMORY.md](./MEMORY.md)。
 
 ### 8.1 三层记忆模型
 
@@ -1273,15 +1629,18 @@ flowchart TD
 
 ### 8.2 多 Agent 记忆隔离
 
+多个主 Agent 共享同一套存储后端，但通过 ID 前缀实现天然隔离：
+
 - **L2 隔离**：`thread_id` 编码为 `{agent_id}:{session_id}`，同一 Checkpointer 天然隔离
 - **L3 隔离**：Store namespace 编码为 `(agent_id, user_id, type)`，同一 Store 天然隔离
 - **L1 隔离**：每个主图独立 State schema，天然隔离
 
 ### 8.3 上下文窗口管理
 
-长对话超出模型上下文窗口时，支持三种策略：
-1. **摘要压缩**（推荐）：LLM 摘要旧消息 + 保留最近 N 条
-2. **截断**：丢弃最旧的消息
+长对话超出模型上下文窗口（模型一次能处理的最大文本量）时，支持三种策略：
+
+1. **摘要压缩**（推荐）：用 LLM 把旧消息压缩成摘要，保留最近 N 条原始消息
+2. **截断**：直接丢弃最旧的消息
 3. **不处理**：由模型自行处理
 
 子代理通过 `agent.yaml` 声明记忆配置：
@@ -1306,7 +1665,48 @@ memory:
 
 ---
 
-## 9. 目录结构
+## 9. 动态配置中心
+
+> **这一节讲什么**：ArtiPivot 的所有运行时参数（模型、提示词、限流、路由规则）不写死在代码或配置文件中，而是存储在 MongoDB，通过 REST API 动态管理。修改配置后通过 Change Stream 立即生效。YAML 文件仅用于首次启动的初始数据导入。详细设计见 [ARCHITECTURE.md](./ARCHITECTURE.md) 第 10 节。
+
+### 9.1 配置分类与生效方式
+
+不同类型的配置有不同的生效方式——有些可以热更新（无需重启），有些需要重建图结构：
+
+| 配置类型 | 存储位置 | 变更是否重建图 | 管理方式 |
+|---|---|---|---|
+| 模型配置 | MongoDB `model_configs` | 否 — invoke 时动态解析 | `PUT /admin/models/...` |
+| 提示词 | MongoDB `prompt_configs` | 否 — 节点执行时读取 | `PUT /admin/prompts/...` |
+| 限流参数 | MongoDB `ratelimit_configs` | 否 — 中间件层拦截 | `PUT /admin/ratelimits/...` |
+| 路由规则 | MongoDB `routing_configs` | **是** — 条件边编译进图 | `PUT /admin/routing/...` |
+| 子代理/工具 | MongoDB `plugins` | **是** — 图拓扑变化 | 发布/下线 API |
+
+### 9.2 管理接口总览
+
+```bash
+# 模型管理
+GET/PUT /admin/models/{agent_id}
+GET/PUT /admin/models/{agent_id}/{sub_agent}
+GET/PUT /admin/models/global/fallback
+
+# 提示词管理
+GET/PUT /admin/prompts/{agent_id}/{node}
+GET/PUT /admin/prompts/{agent_id}/sub/{sub_name}
+
+# 限流管理
+GET/PUT /admin/ratelimits
+GET/PUT /admin/ratelimits/agent/{agent_id}
+GET/PUT /admin/ratelimits/tool/{tool_name}
+
+# 路由规则管理
+GET/PUT /admin/routing/{agent_id}
+```
+
+---
+
+## 10. 目录结构
+
+> **这一节讲什么**：项目的文件组织方式——每个目录对应一个功能模块。
 
 ```
 artipivot/
@@ -1335,6 +1735,7 @@ artipivot/
 │       ├── tools/                    # 工具层
 │       │   ├── registry.py
 │       │   ├── loader.py
+│       │   ├── pipeline.py           # PipelineToolBuilder
 │       │   ├── mcp_adapter.py
 │       │   ├── openapi_importer.py
 │       │   └── builtin/
@@ -1345,6 +1746,12 @@ artipivot/
 │       │   └── context_window.py
 │       ├── models/                   # 模型适配层
 │       │   └── provider.py
+│       ├── config/                   # 动态配置中心
+│       │   ├── center.py             # ConfigCenter — 统一配置入口
+│       │   ├── prompts.py            # 提示词动态管理
+│       │   ├── ratelimit.py          # 多维度限流
+│       │   ├── routing.py            # 路由规则配置
+│       │   └── seed/                 # 首次启动 seed（YAML → MongoDB）
 │       ├── plugins/                  # 插件管理
 │       │   ├── manager.py
 │       │   ├── watcher.py
@@ -1352,9 +1759,22 @@ artipivot/
 │       │   └── sandbox.py
 │       ├── api/
 │       │   ├── server.py
-│       │   └── admin.py
+│       │   └── admin.py               # 插件 + 配置管理 REST API
 │       ├── cli/
 │       │   └── main.py
+│       ├── observability/            # 可观测性
+│       │   ├── logging.py            # structlog 多通道 + 轮转
+│       │   ├── trace.py              # 请求级生命周期日志
+│       │   ├── session.py            # 会话级日志（thread_id 串联多轮）
+│       │   ├── memory.py             # 记忆操作日志（Store/CP/上下文窗口）
+│       │   ├── llm_logger.py         # LLM 调用拦截记录
+│       │   ├── tool_logger.py        # 工具调用拦截记录
+│       │   ├── audit.py              # 审计日志（文件 + MongoDB）
+│       │   └── otel.py               # OTel 可选导出
+│       ├── resilience/               # 容错与弹性
+│       │   ├── circuit_breaker.py    # 熔断器
+│       │   ├── retry.py              # 重试策略
+│       │   └── error_handlers.py     # 节点级 error_handler
 │       └── config.py
 ├── plugins/                          # 外部插件目录
 │   └── example_plugin/
@@ -1379,7 +1799,9 @@ artipivot/
 
 ---
 
-## 10. 关键设计决策
+## 11. 关键设计决策
+
+> **这一节讲什么**：把整个设计过程中做过的关键技术决策汇总成一张表，方便快速了解"为什么选 A 不选 B"。
 
 | 决策 | 选择 | 理由 |
 |------|------|------|
@@ -1393,14 +1815,22 @@ artipivot/
 | 异步模型 | asyncio（全链路 async） | IO 密集型 Agent 场景，async 是最优解 |
 | 记忆持久化 | PostgresSaver（会话）+ PostgresStore（长期） | LangGraph 原生支持，thread_id / namespace 隔离 |
 | 上下文管理 | 摘要压缩（自建节点） | 避免引入 langchain 高层包，纯 langgraph 节点实现 |
-| 可观测性 | LangSmith 原生集成 + OpenTelemetry | LangGraph 节点自动 trace；OpenTelemetry 覆盖非图组件 |
+| **可观测性** | 自建文件日志系统（8 通道 structlog）+ OTel（可选） | 生产不依赖外部 SaaS；LangSmith 仅开发环境可选 |
 | 安全隔离 | 工具权限矩阵 + 沙箱 | 参考 OpenClaw 沙箱模型，最小权限原则 |
+| **动态配置** | ConfigCenter + MongoDB + Change Stream | 模型、提示词、限流等运行时参数全部动态管理，YAML 仅首次 seed |
+| **限流** | Redis 滑动窗口 + 多维度（用户/Agent/工具） | FastAPI 中间件层拦截，不侵入图逻辑 |
+| **容错** | per-node timeout + error_handler + 三级 fallback + 熔断器 | 利用 LangGraph v1.2 原生能力；模型/工具/子代理各层独立容错 |
 
 ---
 
-## 11. 路线图
+## 12. 路线图
+
+> **这一节讲什么**：从 MVP 到完整产品的开发计划，按阶段划分。
 
 ### 第一阶段 — MVP（核心框架）
+
+搭建最小可用系统：一个主 Agent、一个编程式子代理、基础工具、内存版记忆。
+
 - [ ] AgentGateway 多主 Agent 分发
 - [ ] GraphFactory 按 agent_id 构建主图
 - [ ] `BaseRouter`、`BaseSubAgent`、`BaseTool` 抽象
@@ -1408,8 +1838,12 @@ artipivot/
 - [ ] 1 个主图 + 1 个编程式子代理 + ToolNode
 - [ ] InMemorySaver + InMemoryStore
 - [ ] 3 个内置工具
+- [ ] ConfigCenter 基础骨架（YAML seed 加载）
 
 ### 第二阶段 — 声明式 + 记忆
+
+实现声明式子代理和持久化记忆系统。
+
 - [ ] 策略引擎（ReAct / CoT / Function Calling）
 - [ ] YAML 声明式子代理加载
 - [ ] PostgresSaver + PostgresStore 持久化
@@ -1417,18 +1851,33 @@ artipivot/
 - [ ] 长期记忆读写（profile + knowledge 提取）
 - [ ] 子代理 YAML 记忆配置解析
 
-### 第三阶段 — 集群 + 插件
+### 第三阶段 — 集群 + 插件 + 动态配置
+
+实现生产级集群部署、插件热管理、动态配置。
+
 - [ ] MongoDB 注册表 + Change Stream
 - [ ] 图热重建 + Gateway 原子替换
 - [ ] 插件管理 REST API（发布/下线/灰度）
 - [ ] Redis 本地缓存 + 分布式锁
 - [ ] 制品仓库（S3/MinIO）上传下载
 - [ ] 健康检查 + 故障摘除
+- [ ] ConfigCenter 动态配置（模型/提示词/限流/路由规则）
+- [ ] MongoDB 配置集合 + Change Stream 热更新
 
 ### 第四阶段 — 生产加固 + 生态
-- [ ] LangSmith / OpenTelemetry 可观测性
+
+完善可观测性、容错、安全和开发者工具链。
+
+- [ ] 自建文件日志系统（8 通道 structlog，JSON 格式，自动轮转）
+- [ ] LLM 调用拦截记录（prompt/response/token/耗时 → llm.log）
+- [ ] 工具调用拦截记录（参数/结果/耗时 → tool.log）
+- [ ] 请求 trace 日志（完整生命周期 → trace.log）
+- [ ] 审计日志（文件 + MongoDB 双写）
+- [ ] OpenTelemetry 可选导出（环境变量控制）
 - [ ] 工具权限矩阵 + 沙箱执行
-- [ ] 限流控制 + 熔断器
+- [ ] 限流控制（Redis 滑动窗口）+ 熔断器（per-provider 三状态机）
+- [ ] per-node timeout + error_handler 容错
+- [ ] 审计日志（配置变更、插件操作 → MongoDB）
 - [ ] MCP 协议适配器
 - [ ] 插件 CLI（`artipivot plugin init/dev/publish`）
 - [ ] Web UI / API Gateway

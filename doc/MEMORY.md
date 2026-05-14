@@ -64,8 +64,7 @@ class AgentContext:
     agent_id: str       # 主 Agent 标识（记忆隔离 key）
     user_id: str
     thread_id: str      # 完整 thread_id（含 agent_id 前缀）
-    model_provider: str
-    model_name: str
+    model: BaseModel    # 已解析的模型实例（含 fallback 链，由 ModelProvider 解析）
     available_tools: list[str]
 ```
 
