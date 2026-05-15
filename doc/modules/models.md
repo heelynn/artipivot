@@ -37,6 +37,8 @@ class ModelConfig:
     temperature: float = 0.0
     timeout: int = 120
     max_tokens: int | None = None
+    base_url: str | None = None  # 自定义 API 地址（适配兼容供应商）
+    api_key: str | None = None   # 显式 key（优先级高于环境变量）
     fallback: ModelConfig | None = None  # 递归 fallback
 ```
 

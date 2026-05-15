@@ -17,21 +17,19 @@ flowchart TB
     CN --> |"订阅/通知"| Subscribers["ConfigCenter<br/>ModelProvider<br/>PluginWatcher"]
     AS --> |"上传/下载"| Files["插件包 / 制品文件"]
 
-    subgraph Backends["可插拔后端"]
+    subgraph Backends["已实现后端"]
         Memory["Memory<br/>（零依赖开发）"]
-        Mongo["MongoDB"]
         PG["PostgreSQL"]
-        Redis["Redis"]
-        S3["S3 / GCS"]
+    end
+
+    subgraph Extensible["可扩展（register_*_backend）"]
+        Custom["MongoDB / Redis / S3 等"]
     end
 
     DS -.-> Memory
-    DS -.-> Mongo
     DS -.-> PG
     CN -.-> Memory
-    CN -.-> Redis
     AS -.-> Memory
-    AS -.-> S3
 ```
 
 ## 接口定义
@@ -90,9 +88,9 @@ class MyDocumentStore(DocumentStore):
 ## 配置
 
 ```bash
-STORAGE_DOCUMENT_BACKEND=memory    # memory | mongodb | postgres | redis
-STORAGE_NOTIFIER_BACKEND=memory    # memory | mongodb_stream | redis_pubsub | postgres_listen
-STORAGE_ARTIFACT_BACKEND=memory    # memory | local | s3 | gcs
+STORAGE_DOCUMENT_BACKEND=memory    # memory | postgres | 自定义
+STORAGE_NOTIFIER_BACKEND=memory    # memory | 自定义
+STORAGE_ARTIFACT_BACKEND=memory    # memory | 自定义
 ```
 
 或通过 `StorageBundle` 统一创建：
@@ -112,5 +110,4 @@ bundle = StorageBundle(StorageConfig(
 | 场景 | DocumentStore | ChangeNotifier | ArtifactStore |
 |------|---------------|----------------|---------------|
 | 本地开发 | `memory` | `memory` | `memory` |
-| 生产（MongoDB） | `mongodb` | `mongodb_stream` | `s3` |
-| 生产（PostgreSQL） | `postgres` | `redis_pubsub` | `s3` |
+| 生产（PostgreSQL） | `postgres` | `memory`（或自定义 Redis） | `memory`（或自定义 S3） |

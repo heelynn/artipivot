@@ -67,10 +67,9 @@ flowchart LR
     Client["客户端"] --> FastAPI["FastAPI<br/>api/server.py"]
 
     FastAPI --> |"中间件"| TraceMW["trace_id 绑定"]
-    FastAPI --> |"中间件"| RLMW["限流检查"]
     FastAPI --> |"中间件"| CORS["CORS"]
 
-    FastAPI --> |"/api/v1"| Chat["POST /chat/{agent_id}"]
+    FastAPI --> |"/api/v1"| Chat["POST /chat/{agent_id}<br/>（含限流检查）"]
     FastAPI --> |"/admin"| Admin["管理 API"]
 
     Admin --> Models["模型管理"]
