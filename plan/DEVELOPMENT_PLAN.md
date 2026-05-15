@@ -1497,3 +1497,993 @@ Step 30 完成后:
 1. `pytest tests/` — 全部通过
 2. 多 Agent YAML 配置 → 自动构建 → Gateway 分发 → 正确响应
 3. 两个 Agent 使用不同模型、不同子代理、不同工具，互不干扰
+
+---
+---
+
+# Plan: ArtiPivot P4 — 插件系统 + 动态配置 + 图热重建
+
+## Context
+
+P3 已完成多主 Agent 并行运行（107 个测试通过）。P4 目标是实现完整的插件系统和动态配置热更新能力。
+
+**当前状态**：
+- DocumentStore / ChangeNotifier ABC + InMemory 实现 ✅
+- ConfigCenter 已有 PromptStore + RoutingConfig + RateLimiter 骨架 ✅
+- ModelProvider 已有动态模型解析 + ChangeNotifier 订阅 ✅
+- AgentRegistry 已有根据 AgentDef 自动构建图 ✅
+- 但：没有插件元数据管理、没有图热重建、配置变更不能自动传播到 Gateway
+
+**P4 要补齐的**：
+1. PluginManager — 插件元数据 CRUD（DocumentStore 持久化）
+2. PluginWatcher — 监听插件变更 → 触发图热重建
+3. 图热重建 — 路由/子代理变更时，重建受影响的 Agent 图，Gateway 原子替换
+4. ConfigCenter 全量动态 — 配置变更通过 ChangeNotifier 自动传播，无需重启
+5. 存储后端工厂 — 统一的 StorageBundle 从配置创建存储组件
+
+**不改变**：
+- P0/P1/P2/P3 已有代码和测试不变
+- DocumentStore / ChangeNotifier ABC 不变
+- AgentGateway 接口不变（register + invoke + stream）
+
+### 进度总览
+
+| Step | 状态 | 完成日期 | 关键产出 | 备注 |
+|------|------|----------|----------|------|
+| Step 31: 存储后端工厂 | ✅ | 2026-05-15 | `StorageBundle` + 配置解析 | 统一存储组件创建 |
+| Step 32: PluginManager | ✅ | 2026-05-15 | 插件元数据 CRUD | DocumentStore 持久化 |
+| Step 33: 图热重建 | ✅ | 2026-05-15 | `GraphRebuilder` + Gateway 原子替换 | 插件/路由变更触发 |
+| Step 34: PluginWatcher | ✅ | 2026-05-15 | ChangeNotifier 监听 + 自动重建 | 插件变更实时响应 |
+| Step 35: ConfigCenter 全量动态 | ✅ | 2026-05-15 | 路由/提示词/模型变更自动传播 | 零重启热更新 |
+| Step 36: 集成验证 + 测试 | ✅ | 2026-05-15 | 19 个插件系统测试 | 126 tests 全部通过 |
+
+---
+
+## Step 31: 存储后端工厂
+
+**目标**: 统一的 StorageBundle，从配置创建 DocumentStore + ChangeNotifier + ArtifactStore
+
+**文件**:
+- `src/artipivot/storage/bundle.py`（新增）— StorageBundle + StorageConfig
+- `src/artipivot/storage/memory.py`（修改）— 补充 InMemoryArtifactStore
+
+**关键实现**:
+
+```python
+@dataclass
+class StorageConfig:
+    """存储后端配置"""
+    document_backend: str = "memory"
+    notifier_backend: str = "memory"
+    artifact_backend: str = "memory"
+    options: dict = field(default_factory=dict)
+
+class StorageBundle:
+    """统一存储组件工厂"""
+
+    def __init__(self, config: StorageConfig):
+        self.config = config
+        self.document_store: DocumentStore = ...
+        self.change_notifier: ChangeNotifier = ...
+        self.artifact_store: ArtifactStore = ...
+
+    @classmethod
+    def from_config(cls, config: StorageConfig) -> StorageBundle: ...
+```
+
+**验证**: 从配置创建 StorageBundle → 三个组件均可使用
+
+---
+
+## Step 32: PluginManager
+
+**目标**: 插件元数据 CRUD，使用 DocumentStore 持久化
+
+**文件**:
+- `src/artipivot/plugins/__init__.py`（新增）
+- `src/artipivot/plugins/manager.py`（新增）— PluginManager + PluginDocument
+
+**关键实现**:
+
+```python
+@dataclass
+class PluginDocument:
+    """插件元数据"""
+    plugin_type: str          # "sub_agent" | "tool" | "pipeline"
+    name: str
+    version: str
+    agent_id: str             # 所属主 Agent
+    manifest: dict            # 完整配置（策略/工具/提示词等）
+    status: str = "active"    # active | inactive | deprecated
+    created_at: str = ""
+    updated_at: str = ""
+
+class PluginManager:
+    """插件元数据管理 — DocumentStore CRUD"""
+
+    def __init__(self, store: DocumentStore, notifier: ChangeNotifier):
+        self._store = store
+        self._notifier = notifier
+
+    async def publish(self, plugin: PluginDocument) -> None:
+        """发布插件 → DocumentStore.put → 自动 notify"""
+
+    async def deprecate(self, plugin_type: str, name: str) -> None:
+        """标记插件为已弃用"""
+
+    async def list_plugins(self, *, agent_id: str | None = None,
+                          plugin_type: str | None = None) -> list[PluginDocument]:
+        """查询插件列表"""
+
+    async def get_plugin(self, plugin_type: str, name: str) -> PluginDocument | None:
+        """获取单个插件"""
+```
+
+**验证**: 发布/查询/弃用插件 → DocumentStore 中数据正确
+
+---
+
+## Step 33: 图热重建
+
+**目标**: 路由/子代理变更时，重建受影响的 Agent 图，Gateway 原子替换
+
+**文件**:
+- `src/artipivot/plugins/rebuilder.py`（新增）— GraphRebuilder
+
+**关键实现**:
+
+```python
+class GraphRebuilder:
+    """图热重建 — 路由/插件变更时重建并原子替换"""
+
+    def __init__(
+        self,
+        gateway: AgentGateway,
+        graph_factory: GraphFactory,
+        tool_registry: ToolRegistry,
+        plugin_manager: PluginManager,
+    ):
+        ...
+
+    async def rebuild_agent(self, agent_id: str) -> None:
+        """重建指定 Agent 的图并原子替换到 Gateway"""
+        # 1. 从 PluginManager 读取该 Agent 的所有插件
+        # 2. 构建 AgentDef（从插件元数据）
+        # 3. 构建子代理图
+        # 4. 构建主图
+        # 5. gateway.register(agent_id, new_graph) — 原子替换
+```
+
+**原子替换原理**: `gateway.register()` 只是替换 dict 中的一个 value，Python dict 赋值是原子的
+
+**验证**: 注册插件 → 触发 rebuild → Gateway 中的图被替换
+
+---
+
+## Step 34: PluginWatcher
+
+**目标**: 监听 ChangeNotifier 的 plugins 集合变更，自动触发图重建
+
+**文件**:
+- `src/artipivot/plugins/watcher.py`（新增）— PluginWatcher
+
+**关键实现**:
+
+```python
+class PluginWatcher:
+    """插件变更监听器 — 变更时自动触发图重建"""
+
+    def __init__(
+        self,
+        notifier: ChangeNotifier,
+        rebuilder: GraphRebuilder,
+    ):
+        self._notifier = notifier
+        self._rebuilder = rebuilder
+
+    async def start(self) -> None:
+        """订阅 plugins 集合的变更"""
+        await self._notifier.subscribe("plugins", self._on_plugin_change)
+
+    async def _on_plugin_change(
+        self, collection: str, key: str, action: str, data: dict
+    ) -> None:
+        """收到插件变更通知"""
+        agent_id = data.get("agent_id")
+        if agent_id:
+            await self._rebuilder.rebuild_agent(agent_id)
+```
+
+**验证**: 发布插件 → Watcher 收到通知 → 触发 rebuild
+
+---
+
+## Step 35: ConfigCenter 全量动态
+
+**目标**: 路由配置变更时自动触发图重建，提示词/模型变更即时生效
+
+**文件**:
+- `src/artipivot/config/center.py`（修改）— 增加路由变更回调
+- `src/artipivot/plugins/rebuilder.py`（修改）— 接收路由变更事件
+
+**关键改动**:
+
+ConfigCenter 订阅 routing_configs 变更时，调用 GraphRebuilder:
+
+```python
+class ConfigCenter:
+    def __init__(self, store, notifier, *, on_routing_change=None):
+        self._on_routing_change = on_routing_change  # Optional callback
+
+    async def start(self):
+        await self._load_all()
+        await self._notifier.subscribe("prompt_configs", self.prompts.apply)
+        await self._notifier.subscribe("routing_configs", self._routing_change_handler)
+        await self._notifier.subscribe("ratelimit_configs", self.rate_limits.apply)
+        await self._notifier.start()
+```
+
+**变更类型与响应**:
+
+| 配置变更 | 是否重建图 | 机制 |
+|----------|:----------:|------|
+| 模型配置 | 否 | ModelProvider 订阅 model_configs，invoke 时动态解析 |
+| 提示词 | 否 | PromptStore 订阅 prompt_configs，节点执行时读取 |
+| 限流参数 | 否 | RateLimiter 订阅 ratelimit_configs |
+| 路由规则 | **是** | ConfigCenter → GraphRebuilder → 重建图 + 原子替换 |
+| 插件变更 | **是** | PluginWatcher → GraphRebuilder → 重建图 + 原子替换 |
+
+**验证**: 修改路由配置 → 自动重建图 → 新请求使用新路由
+
+---
+
+## Step 36: 集成验证 + 测试
+
+**目标**: 插件系统端到端验证
+
+**文件**:
+- `tests/test_plugins.py`（新增）— 插件系统测试
+- `tests/test_hot_rebuild.py`（新增）— 图热重建测试
+- `demo.py` — 更新为插件模式
+
+**测试覆盖**:
+
+```
+tests/test_plugins.py
+├── TestStorageBundle          # StorageBundle 从配置创建
+├── TestPluginManager          # 插件 CRUD
+└── TestPluginWatcher          # 变更通知 → 触发回调
+
+tests/test_hot_rebuild.py
+├── TestGraphRebuilder         # rebuild_agent → Gateway 替换
+├── TestConfigCenterDynamic    # 路由变更 → 自动重建
+└── TestHotRebuildIsolation    # 重建一个 Agent 不影响其他
+```
+
+**验证标准**:
+1. `pytest tests/` — P0~P4 全部通过
+2. 发布插件 → 图自动重建 → 新请求使用新图
+3. 修改路由配置 → 图自动重建 → 新路由立即生效
+4. 重建过程中，不影响其他 Agent 的请求
+
+---
+
+## 依赖关系图
+
+```
+Step 31 (StorageBundle)
+  │
+  ├─→ Step 32 (PluginManager)
+  │         │
+  │         └─→ Step 33 (GraphRebuilder)
+  │                   │
+  │                   └─→ Step 34 (PluginWatcher)
+  │                             │
+  └─→ Step 35 (ConfigCenter) ───┤
+                                │
+                          Step 36 (集成验证)
+```
+
+**可并行的步骤**:
+- Step 32 依赖 Step 31
+- Step 33 依赖 Step 32
+- Step 34, 35 依赖 Step 33，可并行
+
+---
+
+## 验证策略
+
+每个 Step 完成后:
+1. 导入检查通过
+2. 对应单元测试通过
+3. P0~P3 测试不被破坏
+
+Step 36 完成后:
+1. `pytest tests/` — 全部通过
+2. 发布插件 → 自动重建图 → 新图可调用
+3. 修改路由 → 自动重建 → 新路由生效
+4. 重建不影响其他 Agent
+
+---
+---
+
+# Plan: ArtiPivot P5 — 生产级保障
+
+## Context
+
+P4 已完成插件系统 + 图热重建（126 个测试通过）。P5 目标是将框架从功能原型升级为可部署的生产级系统。
+
+**当前状态**：
+- `resilience/` 包存在但为空（仅 `__init__.py`）
+- `config/ratelimit.py` 仅有骨架（apply 方法空实现）
+- `observability/` 有 structlog 日志和 trace，无 OTel 导出
+- 无 API 层（无 FastAPI）
+- 无 CLI 工具
+- 无 MCP 适配器
+- 工具权限矩阵已有基础（ToolRegistry 白名单过滤），但无执行沙箱
+
+**P5 要补齐的**：
+1. **容错与弹性** — 熔断器（per-provider 三态机）+ 工具重试（指数退避）+ 节点级 error_handler
+2. **限流** — 多维度限流（per-user/agent/tool），基于 DocumentStore 动态配置
+3. **FastAPI API 层** — REST API 入口 + 管理 API + 中间件
+4. **CLI 工具** — 插件脚手架命令（init/dev/publish）
+5. **OpenTelemetry** — 可选 metrics/traces 导出
+6. **MCP 适配器** — MCP Server → BaseTool 适配，扩展工具生态
+7. **集成验证** — 端到端生产级测试
+
+**不改变**：
+- P0~P4 已有代码和测试不变
+- AgentGateway、GraphFactory、PluginManager 等核心接口不变
+- 图拓扑不变
+
+### 进度总览
+
+| Step | 状态 | 完成日期 | 关键产出 | 备注 |
+|------|------|----------|----------|------|
+| Step 37: 熔断器 + 重试策略 | ✅ | 2026-05-15 | `CircuitBreaker` + `RetryPolicy` | per-provider 三态机 |
+| Step 38: 节点 error_handler | ✅ | 2026-05-15 | error_handlers 集合 | classify/子代理/工具容错 |
+| Step 39: 限流器 | ✅ | 2026-05-15 | `RateLimiter` 完整实现 | 多维度 + 动态配置 |
+| Step 40: FastAPI Server | ✅ | 2026-05-15 | `api/server.py` + chat 端点 | REST API 入口 |
+| Step 41: Admin REST API | ✅ | 2026-05-15 | `api/admin.py` 管理 API | 模型/路由/插件/限流管理 |
+| Step 42: CLI 工具 | ✅ | 2026-05-15 | `artipivot` CLI 命令 | plugin init/dev/publish |
+| Step 43: OpenTelemetry | ✅ | 2026-05-15 | `observability/otel.py` | 可选 metrics/traces 导出 |
+| Step 44: MCP 适配器 | ✅ | 2026-05-15 | `tools/mcp_adapter.py` | MCP Server → BaseTool |
+| Step 45: 集成验证 + 测试 | ✅ | 2026-05-15 | 51 个 P5 测试 | 177 tests 全部通过 |
+
+---
+
+## Step 37: 熔断器 + 重试策略
+
+**目标**: 实现 per-provider 熔断器 + 通用重试策略，为模型调用和外部依赖提供容错
+
+**文件**:
+- `src/artipivot/resilience/circuit_breaker.py`（新增）— `CircuitBreaker` 三态机
+- `src/artipivot/resilience/retry.py`（新增）— `RetryPolicy` 指数退避重试
+
+**关键实现**:
+
+```python
+# resilience/circuit_breaker.py
+class CircuitBreaker:
+    """熔断器 — closed/open/half_open 三状态机"""
+
+    def __init__(
+        self,
+        name: str,
+        failure_threshold: int = 3,
+        recovery_timeout: float = 30.0,
+        half_open_max_calls: int = 1,
+    ):
+        self.name = name
+        self.state = "closed"
+        self.failure_count = 0
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.half_open_max_calls = half_open_max_calls
+        self.last_failure_time: float | None = None
+        self._lock = asyncio.Lock()
+
+    async def call(self, fn, *args, **kwargs):
+        """通过熔断器调用函数 — open 时抛异常，half_open 放行有限请求"""
+        ...
+
+    async def _on_success(self): ...
+    async def _on_failure(self, error): ...
+
+
+class CircuitRegistry:
+    """熔断器注册表 — per-provider 管理"""
+
+    def __init__(self): self._circuits: dict[str, CircuitBreaker] = {}
+    def get_or_create(self, name: str, **kwargs) -> CircuitBreaker: ...
+    def get_state(self, name: str) -> str: ...
+    def reset(self, name: str) -> None: ...
+```
+
+```python
+# resilience/retry.py
+class RetryPolicy:
+    """通用重试策略 — 指数退避 + 可选抖动"""
+
+    def __init__(
+        self,
+        max_retries: int = 3,
+        base_delay: float = 1.0,
+        max_delay: float = 30.0,
+        exponential_base: float = 2.0,
+        jitter: bool = True,
+        retryable_exceptions: tuple[type[Exception], ...] = (Exception,),
+    ): ...
+
+    async def execute(self, fn, *args, **kwargs):
+        """带重试的执行 — 失败时指数退避重试"""
+        ...
+
+    def _calculate_delay(self, attempt: int) -> float: ...
+```
+
+**集成点**:
+- `ModelProvider.get_model()` 通过 `CircuitBreaker.call()` 调用工厂函数
+- 工具执行通过 `RetryPolicy.execute()` 包装
+
+**验证**: 创建熔断器 → 模拟连续失败 → 状态转换 closed → open → half_open → closed
+
+---
+
+## Step 38: 节点 error_handler
+
+**目标**: 实现各图节点的 error_handler，利用 LangGraph v1.2 原生容错能力
+
+**文件**:
+- `src/artipivot/resilience/error_handlers.py`（新增）— 节点级 error_handler 集合
+
+**关键实现**:
+
+```python
+# resilience/error_handlers.py
+from langgraph.errors import NodeError
+from langgraph.types import Command
+
+def on_classify_error(state: ArtiPivotState, error: NodeError) -> Command:
+    """classify 节点错误处理 — 超时走 fallback，LLM 错误走规则兜底"""
+    if isinstance(error.original, TimeoutError):
+        return Command(update={"intent": "fallback"}, goto="fallback")
+    if isinstance(error.original, LLMError):
+        return Command(update={"intent": "general"}, goto="respond")
+    return Command(update={"intent": "fallback"}, goto="fallback")
+
+def on_sub_agent_error(state: ArtiPivotState, error: NodeError) -> Command:
+    """子代理节点错误处理 — 返回兜底消息"""
+    return Command(
+        update={"messages": [{"role": "assistant", "content": "抱歉，处理过程中出现错误，请重试。"}]},
+        goto="respond",
+    )
+
+def on_tool_error(state: SubAgentState, error: NodeError) -> SubAgentState:
+    """工具节点错误处理 — 返回错误 ToolMessage，不中断子代理循环"""
+    return {
+        "messages": [ToolMessage(content=f"工具执行失败: {error}", tool_call_id=...)],
+    }
+```
+
+**集成方式**: 在 `build_root_graph()` 中通过 `add_node(..., error_handler=)` 注册
+```python
+builder.add_node("classify", classify_node, error_handler=on_classify_error)
+builder.add_node("sub_agent", ..., error_handler=on_sub_agent_error)
+```
+
+**验证**: 构建带 error_handler 的图 → 模拟节点异常 → 验证流转到 fallback/respond
+
+---
+
+## Step 39: 限流器
+
+**目标**: 完整的多维度限流实现，从骨架升级为可运行的限流器
+
+**文件**:
+- `src/artipivot/config/ratelimit.py`（修改）— 完整实现 `RateLimiter`
+- `src/artipivot/config/ratelimit.py`（修改）— 新增 `RateLimitConfig` 数据结构
+
+**关键实现**:
+
+```python
+# config/ratelimit.py（增强）
+@dataclass
+class RateLimitConfig:
+    """限流配置 — 从 DocumentStore 加载"""
+    defaults: dict = field(default_factory=lambda: {
+        "user_rpm": 60,          # 每用户每分钟
+        "agent_rpm": 600,        # 每 Agent 每分钟
+        "tool_rpm": 120,         # 每工具每分钟
+        "tool_timeout_ms": 30000,
+    })
+    agent_overrides: dict[str, dict] = field(default_factory=dict)
+    tool_overrides: dict[str, dict] = field(default_factory=dict)
+
+    def get_merged(self, agent_id: str, tool_name: str | None = None) -> dict:
+        """合并全局默认 + Agent 覆盖 + 工具覆盖"""
+        ...
+
+class RateLimiter:
+    """多维度限流器"""
+
+    def __init__(self, store: DocumentStore, notifier: ChangeNotifier):
+        self._store = store
+        self._notifier = notifier
+        self._config = RateLimitConfig()
+
+    async def check(self, agent_id: str, user_id: str,
+                    tool_name: str | None = None) -> None:
+        """检查限流 — 超限抛 RateLimitError"""
+        limits = self._config.get_merged(agent_id, tool_name)
+
+        # 内存滑动窗口（P5 先用内存，后续可换 Redis）
+        self._check_user_rpm(agent_id, user_id, limits)
+        self._check_agent_rpm(agent_id, limits)
+        if tool_name:
+            self._check_tool_rpm(tool_name, limits)
+
+    async def apply(self, collection, key, action, data):
+        """ChangeNotifier 回调 — 动态更新限流配置"""
+        ...
+
+    def _check_user_rpm(self, agent_id, user_id, limits): ...
+    def _check_agent_rpm(self, agent_id, limits): ...
+    def _check_tool_rpm(self, tool_name, limits): ...
+```
+
+**限流种子配置**（追加到 `config/seed/`）:
+```yaml
+# config/seed/ratelimits.yaml
+defaults:
+  user_rpm: 60
+  agent_rpm: 600
+  tool_rpm: 120
+  tool_timeout_ms: 30000
+
+agents:
+  code_agent:
+    user_rpm: 30
+    tool_timeout_ms: 60000
+
+tools:
+  code_exec:
+    max_concurrent: 5
+    timeout_ms: 60000
+    daily_quota: 1000
+```
+
+**验证**: 限流配置加载 → 发送超限请求 → 抛 RateLimitError → 动态更新配置生效
+
+---
+
+## Step 40: FastAPI Server
+
+**目标**: FastAPI REST API 入口，包含 chat/invoke 端点 + 中间件（限流/追踪/CORS）
+
+**文件**:
+- `src/artipivot/api/__init__.py`（新增）
+- `src/artipivot/api/server.py`（新增）— FastAPI 应用 + 中间件 + chat 端点
+- `src/artipivot/api/deps.py`（新增）— 依赖注入（共享 Gateway/ConfigCenter 等实例）
+
+**关键实现**:
+
+```python
+# api/server.py
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+
+def create_app() -> FastAPI:
+    app = FastAPI(title="ArtiPivot", version="0.5.0")
+
+    # 中间件
+    app.add_middleware(CORSMiddleware, allow_origins=["*"])
+    app.middleware("http")(trace_middleware)      # 绑定 trace_id
+    app.middleware("http")(rate_limit_middleware)  # 限流检查
+
+    # 路由
+    app.include_router(chat_router, prefix="/api/v1")
+    app.include_router(admin_router, prefix="/admin")
+
+    return app
+
+# Chat 端点
+@router.post("/chat/{agent_id}")
+async def chat(agent_id: str, req: ChatRequest) -> ChatResponse:
+    """同步调用 Agent"""
+    result = await gateway.invoke(agent_id, req.message, req.thread_id, user_id=req.user_id)
+    return ChatResponse(response=result["messages"][-1].content)
+
+@router.post("/chat/{agent_id}/stream")
+async def chat_stream(agent_id: str, req: ChatRequest):
+    """流式调用 Agent（SSE）"""
+    ...
+```
+
+```python
+# api/deps.py
+"""依赖注入 — 应用生命周期管理"""
+
+_gateway: AgentGateway | None = None
+_config_center: ConfigCenter | None = None
+
+async def init_app(seed_dir: str = "config/seed") -> None:
+    """初始化所有组件（启动时调用）"""
+    global _gateway, _config_center
+    ...
+
+def get_gateway() -> AgentGateway: ...
+def get_config_center() -> ConfigCenter: ...
+def get_plugin_manager() -> PluginManager: ...
+def get_rate_limiter() -> RateLimiter: ...
+```
+
+**pyproject.toml 变更**:
+```toml
+[project.optional-dependencies]
+api = ["fastapi>=0.115", "uvicorn>=0.30"]
+
+[project.scripts]
+artipivot = "artipivot.cli.main:app"
+```
+
+**验证**: `uvicorn artipivot.api.server:create_app` → `POST /api/v1/chat/code_agent` 返回响应
+
+---
+
+## Step 41: Admin REST API
+
+**目标**: 管理 API — 模型/路由/插件/限流/提示词的运行时 CRUD
+
+**文件**:
+- `src/artipivot/api/admin.py`（新增）— 管理 REST API 端点
+
+**关键实现**:
+
+```python
+# api/admin.py
+router = APIRouter(prefix="/admin")
+
+# ── 模型管理 ──
+@router.get("/models/{agent_id}")
+async def get_model_config(agent_id: str): ...
+
+@router.put("/models/{agent_id}")
+async def update_model_config(agent_id: str, config: ModelConfigDTO): ...
+
+@router.put("/models/{agent_id}/{sub_agent}")
+async def update_sub_model(agent_id: str, sub_agent: str, config: ModelConfigDTO): ...
+
+# ── 提示词管理 ──
+@router.get("/prompts/{agent_id}/{node}")
+async def get_prompt(agent_id: str, node: str): ...
+
+@router.put("/prompts/{agent_id}/{node}")
+async def update_prompt(agent_id: str, node: str, prompt: PromptDTO): ...
+
+# ── 路由管理 ──
+@router.get("/routing/{agent_id}")
+async def get_routing(agent_id: str): ...
+
+@router.put("/routing/{agent_id}")
+async def update_routing(agent_id: str, routing: RoutingDTO): ...
+
+# ── 插件管理 ──
+@router.get("/plugins")
+async def list_plugins(agent_id: str | None = None): ...
+
+@router.post("/plugins")
+async def publish_plugin(plugin: PluginDTO): ...
+
+@router.delete("/plugins/{plugin_type}/{agent_id}/{name}")
+async def deprecate_plugin(plugin_type: str, agent_id: str, name: str): ...
+
+# ── 限流管理 ──
+@router.get("/ratelimits")
+async def get_ratelimits(): ...
+
+@router.put("/ratelimits/agent/{agent_id}")
+async def update_agent_ratelimit(agent_id: str, config: RateLimitDTO): ...
+
+@router.put("/ratelimits/tool/{tool_name}")
+async def update_tool_ratelimit(tool_name: str, config: RateLimitDTO): ...
+
+# ── 健康检查 ──
+@router.get("/health")
+async def health_check(): ...
+```
+
+**验证**: `PUT /admin/models/code_agent` → 模型配置更新 → 下次 invoke 使用新模型
+
+---
+
+## Step 42: CLI 工具
+
+**目标**: `artipivot` CLI 命令 — 插件开发脚手架
+
+**文件**:
+- `src/artipivot/cli/__init__.py`（新增）
+- `src/artipivot/cli/main.py`（新增）— CLI 入口 + 子命令
+
+**关键实现**:
+
+```python
+# cli/main.py
+import typer
+
+app = typer.Typer(name="artipivot", help="ArtiPivot CLI")
+plugin_app = typer.Typer(help="Plugin management")
+app.add_typer(plugin_app, name="plugin")
+
+@plugin_app.command("init")
+def plugin_init(name: str, template: str = "react"):
+    """生成插件模板目录"""
+    # 创建 plugins/{name}/
+    #   ├── manifest.yaml   # 插件元数据 + 策略配置
+    #   ├── tools/           # 自定义工具
+    #   └── prompts/         # 自定义提示词
+    ...
+
+@plugin_app.command("dev")
+def plugin_dev(name: str, agent_id: str = "code_agent"):
+    """本地开发模式 — 文件变更自动 reload + 热发布"""
+    ...
+
+@plugin_app.command("publish")
+def plugin_publish(name: str, version: str = "auto"):
+    """发布插件 — 打包 + 上传到 DocumentStore"""
+    ...
+
+@app.command("serve")
+def serve(host: str = "0.0.0.0", port: int = 8000):
+    """启动 API 服务器"""
+    import uvicorn
+    uvicorn.run("artipivot.api.server:create_app", host=host, port=port, factory=True)
+
+@app.command("agents")
+def list_agents():
+    """列出所有已注册 Agent"""
+    ...
+```
+
+**pyproject.toml 变更**:
+```toml
+[project.scripts]
+artipivot = "artipivot.cli.main:app"
+
+[project.optional-dependencies]
+cli = ["typer>=0.12"]
+```
+
+**验证**: `artipivot plugin init my_plugin` → 生成目录 → `artipivot serve` → API 可用
+
+---
+
+## Step 43: OpenTelemetry
+
+**目标**: 可选 OTel 导出 — metrics + traces，环境变量控制，不启用不影响核心功能
+
+**文件**:
+- `src/artipivot/observability/otel.py`（新增）— OTel 初始化 + 核心指标
+
+**关键实现**:
+
+```python
+# observability/otel.py
+import os
+
+_OTEL_ENABLED = os.getenv("OTEL_ENABLED", "false") == "true"
+
+def setup_otel(app=None) -> None:
+    """初始化 OTel — 仅在 OTEL_ENABLED=true 时生效"""
+    if not _OTEL_ENABLED:
+        return
+
+    from opentelemetry import metrics, trace
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.trace import TracerProvider
+
+    # FastAPI 自动埋点
+    if app:
+        FastAPIInstrumentor.instrument_app(app)
+
+    # 核心指标
+    meter = metrics.get_meter("artipivot")
+    request_duration = meter.create_histogram("artipivot.request.duration", unit="ms")
+    classify_duration = meter.create_histogram("artipivot.classify.duration", unit="ms")
+    tool_duration = meter.create_histogram("artipivot.tool.duration", unit="ms")
+    tool_errors = meter.create_counter("artipivot.tool.errors")
+    intent_distribution = meter.create_counter("artipivot.intent.classified")
+    circuit_opens = meter.create_counter("artipivot.circuit.opens")
+
+# 全局引用（OTEL_ENABLED=false 时为 no-op）
+if _OTEL_ENABLED:
+    from opentelemetry import metrics
+    meter = metrics.get_meter("artipivot")
+else:
+    meter = None
+
+def record_metric(name: str, value: float, attributes: dict | None = None):
+    """记录指标 — OTel 未启用时静默跳过"""
+    if not meter:
+        return
+    ...
+```
+
+**环境变量**:
+```bash
+OTEL_ENABLED=true                                    # 启用 OTel
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317  # 导出地址
+```
+
+**验证**: OTEL_ENABLED=false → 不导入任何 OTel 包 → 功能正常
+
+---
+
+## Step 44: MCP 适配器
+
+**目标**: MCP Server → BaseTool 适配，将外部 MCP 工具纳入 ToolRegistry
+
+**文件**:
+- `src/artipivot/tools/mcp_adapter.py`（新增）— MCP 适配器
+
+**关键实现**:
+
+```python
+# tools/mcp_adapter.py
+from langchain_core.tools import BaseTool
+
+class MCPToolAdapter:
+    """MCP Server → BaseTool 适配器"""
+
+    def __init__(self, server_url: str, server_name: str | None = None):
+        self._url = server_url
+        self._name = server_name or server_url
+
+    async def discover_tools(self) -> list[BaseTool]:
+        """从 MCP Server 发现工具并转换为 BaseTool"""
+        # 1. 连接 MCP Server
+        # 2. 调用 list_tools() 获取工具列表
+        # 3. 为每个 MCP tool 创建 BaseTool wrapper
+        ...
+
+    def _wrap_tool(self, mcp_tool) -> BaseTool:
+        """将单个 MCP tool 包装为 LangChain BaseTool"""
+        from langchain_core.tools import tool
+
+        @tool(name=mcp_tool.name, description=mcp_tool.description)
+        async def wrapped(**kwargs) -> str:
+            # 调用 MCP Server 执行工具
+            result = await self._call_tool(mcp_tool.name, kwargs)
+            return str(result)
+
+        wrapped.args_schema = mcp_tool.input_schema
+        return wrapped
+
+    async def _call_tool(self, tool_name: str, arguments: dict) -> str:
+        """调用 MCP Server 的工具"""
+        ...
+
+class MCPRegistry:
+    """MCP Server 注册表 — 管理多个 MCP 连接"""
+
+    def __init__(self, tool_registry: ToolRegistry):
+        self._tool_registry = tool_registry
+        self._servers: dict[str, MCPToolAdapter] = {}
+
+    async def register_server(self, name: str, url: str) -> list[str]:
+        """注册 MCP Server → 发现工具 → 注册到 ToolRegistry"""
+        adapter = MCPToolAdapter(url, name)
+        tools = await adapter.discover_tools()
+        for t in tools:
+            self._tool_registry.register(t)
+        self._servers[name] = adapter
+        return [t.name for t in tools]
+```
+
+**验证**: Mock MCP Server → discover_tools → 注册到 ToolRegistry → 工具可调用
+
+---
+
+## Step 45: 集成验证 + 测试
+
+**目标**: P5 全模块端到端验证
+
+**文件**:
+- `tests/test_resilience.py`（新增）— 熔断器 + 重试 + error_handler 测试
+- `tests/test_ratelimit.py`（新增）— 限流器测试
+- `tests/test_api.py`（新增）— API 端点测试（使用 TestClient）
+- `tests/test_cli.py`（新增）— CLI 命令测试
+- `tests/test_otel.py`（新增）— OTel 集成测试
+- `tests/test_mcp.py`（新增）— MCP 适配器测试
+
+**测试覆盖**:
+
+```
+tests/test_resilience.py
+├── TestCircuitBreaker          # closed → open → half_open → closed 状态转换
+├── TestCircuitRegistry         # per-provider 注册 + 状态查询
+├── TestRetryPolicy             # 指数退避 + 抖动 + 最大重试
+└── TestErrorHandlers           # classify/sub_agent/tool 错误处理
+
+tests/test_ratelimit.py
+├── TestRateLimitConfig         # 配置合并（全局 + agent + tool 覆盖）
+├── TestRateLimiter             # user/agent/tool 限流检查
+└── TestRateLimiterDynamic      # 动态更新配置
+
+tests/test_api.py
+├── TestChatEndpoint            # POST /api/v1/chat/{agent_id}
+├── TestHealthCheck             # GET /admin/health
+├── TestAdminModels             # GET/PUT /admin/models/{agent_id}
+├── TestAdminPlugins            # POST/DELETE /admin/plugins
+├── TestAdminRouting            # GET/PUT /admin/routing/{agent_id}
+├── TestAdminPrompts            # GET/PUT /admin/prompts/{agent_id}/{node}
+├── TestAdminRateLimits         # GET/PUT /admin/ratelimits/*
+└── TestMiddleware              # trace_id 绑定 + 限流中间件
+
+tests/test_cli.py
+├── TestPluginInit              # artipivot plugin init
+├── TestPluginPublish           # artipivot plugin publish
+└── TestServe                   # artipivot serve（启动验证）
+
+tests/test_otel.py
+├── TestOTelDisabled            # OTEL_ENABLED=false 不导入 OTel
+└── TestOTelEnabled             # OTEL_ENABLED=true 记录指标
+
+tests/test_mcp.py
+├── TestMCPToolAdapter          # discover_tools + _wrap_tool
+└── TestMCPRegistry             # register_server → ToolRegistry
+```
+
+**验证标准**:
+1. `pytest tests/` — P0~P5 全部通过
+2. `artipivot serve` → API 可访问 → chat 端点返回响应
+3. 熔断器在连续失败后打开，恢复后自动关闭
+4. 限流超限返回 429
+5. 管理 API 可 CRUD 所有运行时配置
+6. OTel 未启用时零影响
+
+---
+
+## 依赖关系图
+
+```
+Step 37 (熔断器 + 重试) ──┐
+Step 38 (error_handler) ──┤
+                          ▼
+Step 39 (限流器) ────────→ Step 40 (FastAPI Server)
+                              │
+                              ├─→ Step 41 (Admin API)
+                              │
+                              └─→ Step 42 (CLI)
+
+Step 43 (OTel) ─── 独立，可并行
+
+Step 44 (MCP) ─── 独立，可并行
+
+                     Step 45 (集成验证)
+```
+
+**可并行的步骤**:
+- Step 37, 38 可并行（都独立实现）
+- Step 40 依赖 Step 37, 38, 39
+- Step 41, 42 依赖 Step 40，可并行
+- Step 43, 44 完全独立，可随时开发
+
+---
+
+## 验证策略
+
+每个 Step 完成后:
+1. 导入检查通过
+2. 对应单元测试通过
+3. P0~P4 测试不被破坏
+
+Step 45 完成后:
+1. `pytest tests/` — 全部通过（预计 170+）
+2. `artipivot serve` — API 可启动
+3. `POST /api/v1/chat/code_agent` → 正确响应
+4. `PUT /admin/models/code_agent` → 模型动态切换
+5. `artipivot plugin init` → 生成模板
+6. 熔断器 + 限流 + 重试容错链路完整
