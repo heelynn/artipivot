@@ -80,7 +80,7 @@ builder.add_node("writer", writer_fn, error_handler=on_sub_agent_error)
 
 ## 限流器（RateLimiter）
 
-多维度限流：per-user、per-agent、per-tool
+多维度滑动窗口限流，按优先级合并配置（默认值 → Agent 覆盖 → 工具覆盖）：
 
 ```python
 from artipivot.config.ratelimit import RateLimiter
@@ -89,9 +89,32 @@ rl = RateLimiter(store, notifier)
 await rl.check("code_agent", "user_1")  # 超限抛 RateLimitError
 ```
 
-动态配置：
+### 限流维度
+
+| 维度 | 配置 key | 说明 |
+|------|----------|------|
+| 每用户 RPM | `user_rpm` | 同一 user_id 每分钟最大请求数 |
+| 每 Agent RPM | `agent_rpm` | 同一 agent_id 每分钟最大请求数 |
+| 每工具 RPM | `tool_rpm` | 同一工具每分钟最大调用次数 |
+| 工具超时 | `tool_timeout_ms` | 单个工具调用的最大等待时间 |
+
+### 动态配置
 
 ```bash
 PUT /admin/ratelimits/agent/{agent_id}
-{"user_rpm": 30, "tool_timeout_ms": 60000}
+{"user_rpm": 30, "agent_rpm": 100, "tool_timeout_ms": 60000}
+
+PUT /admin/ratelimits/tool/{tool_name}
+{"rpm": 50, "timeout_ms": 30000}
 ```
+
+### 配置合并
+
+```
+默认值（代码内置 60 RPM/用户）
+  └── Agent 级别覆盖（PUT /admin/ratelimits/agent/{agent_id}）
+        └── 工具级别覆盖（PUT /admin/ratelimits/tool/{tool_name}）
+              └── 最终生效值
+```
+
+限流参数热更新，无需重建图。

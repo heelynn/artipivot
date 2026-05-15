@@ -26,6 +26,21 @@ flowchart LR
 
 ## 插件元数据管理
 
+### PluginDocument 字段
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `plugin_type` | `str` | `"sub_agent"` / `"tool"` / `"pipeline"` |
+| `name` | `str` | 插件名称（唯一标识的一部分） |
+| `version` | `str` | 语义化版本号 |
+| `agent_id` | `str` | 归属的 Agent |
+| `manifest` | `dict` | 插件配置（strategy、tools、system_prompt 等） |
+| `status` | `str` | `"active"` / `"deprecated"`（由 publish/deprecate 自动设置） |
+| `created_at` | `str` | 发布时间（ISO 8601，自动设置） |
+| `updated_at` | `str` | 更新时间（ISO 8601，自动设置） |
+
+### 发布与弃用
+
 ```python
 from artipivot.plugins.manager import PluginManager, PluginDocument
 
@@ -78,6 +93,18 @@ await watcher.start()
 ```
 
 端到端流程：`publish → DocumentStore.put → ChangeNotifier.notify → PluginWatcher → GraphRebuilder → Gateway.register`
+
+## 错误处理
+
+重建图可能因以下原因失败：
+
+| 失败原因 | 表现 | 处理 |
+|----------|------|------|
+| 插件 manifest 不合法 | `build()` 阶段抛异常 | 日志记录错误，**旧图保持服务**，不会部分替换 |
+| routing 与子代理不匹配 | `GraphFactory.build()` 验证失败 | 日志 + 旧图保持服务 |
+| 模型配置缺失 | `build()` 阶段抛异常 | 日志 + 旧图保持服务 |
+
+**关键保证**：`Gateway.register()` 在重建**成功**后才执行原子替换（dict 赋值），重建失败时旧图不受影响。
 
 ## ConfigCenter 路由回调
 

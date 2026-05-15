@@ -73,16 +73,40 @@ class ArtifactStore(ABC):
 
 ## 接入新后端
 
-继承对应 ABC，实现抽象方法：
+三个接口各自独立，可分别实现：
 
 ```python
-from artipivot.storage.base import DocumentStore
+from artipivot.storage.base import DocumentStore, ChangeNotifier, ArtifactStore
 
+# DocumentStore — 文档存储
 class MyDocumentStore(DocumentStore):
     async def get(self, collection, key): ...
     async def put(self, collection, key, data): ...
     async def delete(self, collection, key): ...
     async def query(self, collection, filter): ...
+
+# ChangeNotifier — 变更通知（生产环境推荐 Redis Pub/Sub）
+class MyChangeNotifier(ChangeNotifier):
+    async def subscribe(self, collection, callback): ...
+    async def notify(self, collection, key, action, data): ...
+    async def start(self): ...
+    async def stop(self): ...
+
+# ArtifactStore — 制品存储（生产环境推荐 S3/MinIO）
+class MyArtifactStore(ArtifactStore):
+    async def upload(self, local_path, remote_key) -> str: ...
+    async def download(self, remote_key, local_path) -> str: ...
+```
+
+### PostgreSQL 接入示例
+
+```python
+# DocumentStore — 以表名作为 collection
+# 表结构：collection text, key text, data jsonb, primary key (collection, key)
+
+# ChangeNotifier — 使用 PostgreSQL LISTEN/NOTIFY
+# LISTEN artipivot_config_changes;
+# NOTIFY artipivot_config_changes, '{"collection":"plugins","key":"...","action":"put"}';
 ```
 
 ## 配置

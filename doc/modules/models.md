@@ -78,21 +78,38 @@ def _factory_my_provider(cfg: ModelConfig) -> BaseChatModel:
 self._factories["my_provider"] = _factory_my_provider
 ```
 
-## 运行时动态切换
-
-模型变更**不需要重建图**，下一次 `invoke()` 自动使用新配置：
-
-```python
-await model_provider.update_agent_model("code_agent", {
-    "provider": "anthropic", "name": "claude-opus-4-6",
-})
-```
-
 ## API Key 配置
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
+```
+
+> **安全提示：** `ModelConfig.api_key` 字段会明文存储在 DocumentStore 中。生产环境请使用环境变量注入 key，不要在 YAML 种子或 Admin API 请求中传递 `api_key` 字段。框架在解析 key 时的优先级：环境变量 > 配置字段。
+
+## 配置优先级
+
+作用域越精确的配置优先级越高：
+
+```
+子代理配置 > Agent 配置 > 全局配置 > 全局 fallback
+```
+
+## 运行时动态切换
+
+模型变更**不需要重建图**，下一次 `invoke()` 自动使用新配置。
+
+通过 Admin API：
+```bash
+PUT /admin/models/code_agent
+{"provider": "anthropic", "name": "claude-opus-4-6"}
+```
+
+通过 Python API：
+```python
+await model_provider.update_agent_model("code_agent", {
+    "provider": "anthropic", "name": "claude-opus-4-6",
+})
 ```
 
 ## 管理 API

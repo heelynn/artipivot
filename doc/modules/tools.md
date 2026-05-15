@@ -65,16 +65,29 @@ tool_node = registry.get_tool_node(["web_search", "code_exec"])
 from artipivot.tools.mcp_adapter import MCPRegistry, MCPToolInfo
 
 mcp = MCPRegistry(tool_registry)
+
+# call_fn 签名：async def my_call_fn(tool_name: str, arguments: dict) -> str
+async def my_mcp_call(tool_name: str, arguments: dict) -> str:
+    import aiohttp
+    async with aiohttp.ClientSession() as session:
+        resp = await session.post(
+            "http://localhost:3000/tools/call",
+            json={"name": tool_name, "arguments": arguments},
+        )
+        return await resp.text()
+
 mcp.register_server(
     "remote",
     "http://localhost:3000",
     tools=[
-        MCPToolInfo("search", "Search", {"properties": {"q": {"type": "string"}}, "required": ["q"]}),
+        MCPToolInfo("search", "Search the internet", {"properties": {"q": {"type": "string"}}, "required": ["q"]}),
     ],
-    call_fn=my_async_call_fn,  # 可选，不传则使用 stub
+    call_fn=my_mcp_call,
 )
 # 工具自动注册到 ToolRegistry
 ```
+
+`call_fn` 为 `None` 时使用 stub（始终返回 mock 结果），适用于本地开发。生产环境必须提供实际的调用函数。
 
 ## 内置工具（stub）
 
