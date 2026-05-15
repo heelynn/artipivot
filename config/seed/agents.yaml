@@ -1,0 +1,46 @@
+# agents.yaml
+#
+# Multi-agent declaration — define each agent's model, routing, sub-agents, tools.
+# Loaded on first startup, managed via REST API afterwards.
+
+agents:
+  code_agent:
+    model:
+      provider: anthropic
+      name: claude-sonnet-4-6
+    routing:
+      confidence_threshold: 0.7
+      intents:
+        code_write: code_writer
+        code_review: code_writer
+        debug: code_writer
+    sub_agents:
+      code_writer:
+        strategy: react
+        tools: [web_search, code_exec, file_io]
+        system_prompt: "You are a professional coding assistant."
+        strategy_config:
+          max_iterations: 5
+    prompts:
+      classify: "Classify the user message into one of: {intents}."
+      respond: "Based on the sub-agent result, compose a helpful response."
+
+  research_agent:
+    model:
+      provider: openai
+      name: gpt-4o
+    routing:
+      confidence_threshold: 0.6
+      intents:
+        search: researcher
+        summarize: researcher
+    sub_agents:
+      researcher:
+        strategy: cot
+        tools: [web_search]
+        system_prompt: "You are a research assistant."
+        strategy_config:
+          max_plan_steps: 3
+    prompts:
+      classify: "Classify the user message into one of: search, summarize."
+      respond: "Summarize the research findings for the user."

@@ -35,8 +35,28 @@ class TestMemoryFactories:
 
     def test_create_checkpointer_invalid(self):
         from artipivot.memory.checkpointer import create_checkpointer
-        with pytest.raises(ValueError, match="Unsupported"):
+        with pytest.raises(ValueError, match="Unknown checkpointer backend"):
+            create_checkpointer("nonexistent")
+
+    def test_create_checkpointer_postgres_no_uri(self):
+        from artipivot.memory.checkpointer import create_checkpointer
+        with pytest.raises(ValueError, match="PostgreSQL URI"):
             create_checkpointer("postgres")
+
+    def test_register_custom_checkpointer(self):
+        from artipivot.memory.checkpointer import (
+            available_checkpointer_backends,
+            create_checkpointer,
+            register_checkpointer_backend,
+        )
+
+        class FakeCheckpointer:
+            pass
+
+        register_checkpointer_backend("fake", lambda **kw: FakeCheckpointer())
+        cp = create_checkpointer("fake")
+        assert isinstance(cp, FakeCheckpointer)
+        assert "fake" in available_checkpointer_backends()
 
     def test_create_store(self):
         from artipivot.memory.store import create_store
@@ -45,5 +65,25 @@ class TestMemoryFactories:
 
     def test_create_store_invalid(self):
         from artipivot.memory.store import create_store
-        with pytest.raises(ValueError, match="Unsupported"):
+        with pytest.raises(ValueError, match="Unknown store backend"):
+            create_store("nonexistent")
+
+    def test_create_store_postgres_no_uri(self):
+        from artipivot.memory.store import create_store
+        with pytest.raises(ValueError, match="PostgreSQL URI"):
             create_store("postgres")
+
+    def test_register_custom_store(self):
+        from artipivot.memory.store import (
+            available_store_backends,
+            create_store,
+            register_store_backend,
+        )
+
+        class FakeStore:
+            pass
+
+        register_store_backend("fake", lambda **kw: FakeStore())
+        st = create_store("fake")
+        assert isinstance(st, FakeStore)
+        assert "fake" in available_store_backends()
