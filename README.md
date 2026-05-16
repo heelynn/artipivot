@@ -96,28 +96,35 @@ curl -X POST http://localhost:8000/api/v1/chat/research_agent \
 
 ### 第二层 — 子代理
 
-子代理是自治执行单元，独立完成"规划 → 调工具 → 生成响应"全流程。
+子代理是自治执行单元，独立完成"规划 → 调工具 → 生成响应"全流程。每个子代理拥有独立的 State、独立的模型、独立的策略。
 
-**三种创建方式：**
+子代理的组成分为**图拓扑**和**数据编排**两部分，各自有多种实现方式，组合使用：
 
-| 方式 | 适用场景 | 示例 |
-|------|---------|------|
-| **声明式** — YAML 配置 | 零代码快速创建 | `strategy: react` + `tools: [web_search]` |
-| **DSL 图** — YAML 自定义拓扑 | 自定义流程编排 | `graph:` + `nodes/edges` 定义 |
-| **编程式** — Python API | 完全控制图结构 | `build_programmatic_subagent(def, tool_node)` |
-| **插件热加载** — REST/CLI | 运行时动态添加 | `pm.publish(PluginDocument(...))` → 自动重建图 |
+#### 图拓扑 — 决定执行流程
 
-**三种内置策略（可通过 `register_strategy()` 扩展）：**
+**方式一：策略模板**（YAML 一行配置，零代码）
 
-| 策略 | 图拓扑 | 适用 |
-|------|-------|------|
-| **ReAct** | think → tools → think 循环 | 复杂多步推理 |
+在 `sub_agents.yaml` 中选一种内置策略，指定工具列表即可。适合大多数标准场景。
+
+```yaml
+sub_agents:
+  code_writer:
+    strategy: react            # ReAct / CoT / Function Calling
+    tools: [web_search, code_exec]
+    system_prompt: "You are a coding assistant."
+```
+
+| 策略 | 图拓扑 | 适用场景 |
+|------|-------|---------|
+| **ReAct** | think → tools → think 循环 | 复杂多步推理，需要反复调用工具 |
 | **Chain-of-Thought** | plan → execute → synthesize | 可分解的结构化任务 |
-| **Function Calling** | llm → tools → END | 简单查询/转换 |
+| **Function Calling** | llm → tools → END | 简单查询/转换，单次工具调用 |
 
-### Graph DSL
+可通过 `register_strategy()` 注册自定义策略，实现 `Strategy` ABC 的 `build()` 方法。
 
-当三种固定策略无法满足需求时，用 Graph DSL 在 YAML 中定义任意图拓扑：
+**方式二：Graph DSL**（YAML 自定义图，零代码）
+
+当固定策略无法满足需求时（比如并行执行、条件分支、多节点合并），用 `graph:` 替代 `strategy:` 定义任意图拓扑。与策略模板写在同一个 `sub_agents.yaml` 中，向后兼容。
 
 ```yaml
 sub_agents:
@@ -130,14 +137,120 @@ sub_agents:
         respond:  { type: llm, system_prompt: "Compose a response." }
       edges:
         - { from: START, to: search }
-        - { from: START, to: execute }
+        - { from: START, to: execute }       # 并行扇出
         - { from: search, to: merge }
-        - { from: execute, to: merge }
+        - { from: execute, to: merge }        # 扇入合并
         - { from: merge, to: respond }
         - { from: respond, to: END }
 ```
 
-5 种节点类型：`llm` / `tool` / `tools` / `transform` / `sub_agent`。条件路由支持字段映射、内置函数、Transform 路由三种机制。详见 [graph_dsl.md](doc/modules/graph_dsl.md)。
+5 种节点类型：
+
+| type | 说明 | 引用来源 |
+|------|------|---------|
+| `llm` | LLM 调用 | runtime context 中的 model |
+| `tool` | 单工具执行 | ToolRegistry |
+| `tools` | 多工具 ToolNode | ToolRegistry |
+| `transform` | 数据变换 | TransformRegistry（按名引用，支持热加载） |
+| `sub_agent` | 嵌套子代理 | 引用同 Agent 内其他已编译图 |
+
+条件路由三种机制：字段映射（读 state 字段映射到目标节点）、内置函数（`has_tool_calls`）、Transform 路由（复用 TransformRegistry，支持热加载）。详见 [graph_dsl.md](doc/modules/graph_dsl.md)。
+
+**方式三：编程式**（Python API，完全控制）
+
+需要完全控制图结构时，用 Python 代码直接构建：
+
+```python
+from artipivot.agents.programmatic import build_programmatic_subagent
+from artipivot.agents.base import SubAgentDef
+
+sub_def = SubAgentDef(name="my_agent", tools=["web_search"], system_prompt="...")
+sub_graph = build_programmatic_subagent(sub_def, tool_node)
+```
+
+**方式四：插件热加载**（运行时 REST/CLI 动态添加，无需重启）
+
+通过 PluginManager 发布插件，GraphRebuilder 自动重建图并原子替换到 Gateway：
+
+```bash
+curl -X POST http://localhost:8000/admin/plugins/publish \
+  -d '{
+    "plugin_type": "sub_agent",
+    "name": "dynamic_agent",
+    "agent_id": "code_agent",
+    "manifest": {
+      "strategy": "react",
+      "tools": ["web_search"],
+      "system_prompt": "You are a dynamic agent."
+    }
+  }'
+```
+
+插件 manifest 支持 `strategy`（策略模板）和 `graph`（DSL 图）两种方式，与 YAML 配置语法一致。
+
+#### 数据编排 — 决定数据怎么流动
+
+子代理图中经常需要合并、过滤、格式化多个节点返回的数据。Transform 提供轻量的数据编排能力：**Python 函数管数据变换，注册表管生命周期，图节点按名称引用，替换函数不触发图重建。**
+
+```python
+# 任意 Python 文件（不限于本项目仓库）
+async def merge_results(data: dict) -> dict:
+    results = data.get("results", [])
+    return {**data, "summary": " | ".join(r["content"] for r in results)}
+```
+
+三种注册来源，都不要求代码在本仓库内：
+
+**1. Entry Points — pip 包（冷启动）**
+
+外部包声明 entry point，`pip install` 后重启服务自动发现：
+
+```toml
+# 外部包 pyproject.toml
+[project.entry-points."artipivot.transforms"]
+merge_results = "my_transforms.merge:merge_results"
+```
+
+```bash
+pip install my-transforms        # 公共 PyPI
+pip install -e ./local_pkg       # 本地开发模式
+pip install git+ssh://git@github.com/team/transforms.git  # git 仓库
+```
+
+必须重启：`importlib.metadata` 读的是安装时元数据，新安装的包需要重新加载。
+
+**2. YAML 配置（热加载）**
+
+代码在 `sys.path` 上即可，改配置不重启：
+
+```yaml
+# config/seed/transforms.yaml — 运行时修改自动生效
+transforms:
+  merge_results:
+    module: my_transforms.merge
+    function: merge_results
+```
+
+代码来源不限：
+- `pip install` 的包
+- `git clone` 后加入 `sys.path` 的目录
+- `PYTHONPATH` 上的任意 `.py` 文件
+- 多个外部 git 仓库，各自加入 `sys.path` 即可
+
+修改 YAML 后通过 DocumentStore → ChangeNotifier → TransformWatcher 自动替换函数引用，下次图执行即生效，**不触发图重建**。
+
+**3. REST API（热加载）**
+
+运行时即时注册，不改文件不重启：
+
+```bash
+curl -X POST http://localhost:8000/admin/transforms/register \
+  -d '{"name": "merge", "module": "my_transforms.merge", "function": "merge_results"}'
+```
+
+同样只要 `importlib.import_module()` 能导入即可。
+
+详见 [transforms.md](doc/modules/transforms.md)。
 
 ### 第三层 — 工具
 
