@@ -14,6 +14,7 @@ from artipivot.models.provider import ModelProvider
 from artipivot.plugins.manager import PluginManager
 from artipivot.storage.memory import InMemoryDocumentStore, InProcessNotifier
 from artipivot.tools.registry import ToolRegistry
+from artipivot.transforms.registry import TransformRegistry
 
 
 @pytest.fixture
@@ -26,6 +27,7 @@ def client():
     pm = PluginManager(store, notifier)
     rl = RateLimiter(store, notifier)
     tools = ToolRegistry()
+    transforms = TransformRegistry()
 
     set_components(
         gateway=gateway,
@@ -33,6 +35,7 @@ def client():
         plugin_manager=pm,
         rate_limiter=rl,
         tool_registry=tools,
+        transform_registry=transforms,
     )
 
     app = create_app()
@@ -126,3 +129,50 @@ class TestAdminRateLimits:
             json={"scope": "tool", "overrides": {"tool_rpm": 10}},
         )
         assert resp.status_code == 200
+
+
+class TestAdminTransforms:
+    def test_list_transforms_empty(self, client):
+        resp = client.get("/admin/transforms")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_register_and_list(self, client):
+        resp = client.post(
+            "/admin/transforms/register",
+            json={"name": "json_loads", "module": "json", "function": "loads"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "registered"
+        assert data["name"] == "json_loads"
+
+        resp = client.get("/admin/transforms")
+        items = resp.json()
+        assert len(items) == 1
+        assert items[0]["name"] == "json_loads"
+        assert items[0]["source"] == "api"
+
+    def test_register_bad_module_returns_500(self, client):
+        resp = client.post(
+            "/admin/transforms/register",
+            json={
+                "name": "bad",
+                "module": "nonexistent_module_xyz",
+                "function": "nope",
+            },
+        )
+        assert resp.status_code == 500
+
+    def test_unregister(self, client):
+        client.post(
+            "/admin/transforms/register",
+            json={"name": "json_loads", "module": "json", "function": "loads"},
+        )
+        resp = client.delete("/admin/transforms/json_loads")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "unregistered"
+
+    def test_unregister_missing_returns_404(self, client):
+        resp = client.delete("/admin/transforms/nope")
+        assert resp.status_code == 404

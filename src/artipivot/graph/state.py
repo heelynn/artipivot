@@ -26,3 +26,4 @@ class SubAgentState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     query: str
     artifacts: Annotated[list[str], operator.add]
+    metadata: dict

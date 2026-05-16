@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from artipivot.agents.base import SubAgentDef
 from artipivot.agents.declarative import DeclarativeSubAgentDef
+from artipivot.graph.dsl import GraphDef
 from artipivot.memory.config import MemoryConfig
 
 
@@ -32,6 +33,10 @@ class AgentDef:
     declarative_sub_agents: dict[str, DeclarativeSubAgentDef] = field(default_factory=dict)
     # {"code_writer": DeclarativeSubAgentDef(...)}
 
+    # Sub-agents (DSL graph)
+    graph_sub_agents: dict[str, GraphDef] = field(default_factory=dict)
+    # {"research_and_code": GraphDef(...)}
+
     # Tools — global whitelist for this agent
     tools: list[str] = field(default_factory=list)
 
@@ -55,12 +60,16 @@ class AgentDef:
             )
 
         decl_sub_agents = {}
+        graph_sub_agents = {}
         for name, sd in data.get("sub_agents", {}).items():
-            strategy = sd.get("strategy")
-            if strategy:
+            if "graph" in sd:
+                from artipivot.graph.dsl import parse_graph_def
+
+                graph_sub_agents[name] = parse_graph_def(name, sd["graph"])
+            elif sd.get("strategy"):
                 decl_sub_agents[name] = DeclarativeSubAgentDef(
                     name=name,
-                    strategy=strategy,
+                    strategy=sd["strategy"],
                     tools=sd.get("tools", []),
                     system_prompt=sd.get("system_prompt", ""),
                     strategy_config=sd.get("strategy_config", {}),
@@ -76,6 +85,7 @@ class AgentDef:
             intent_map=routing.get("intents", {}),
             sub_agents=sub_agents,
             declarative_sub_agents=decl_sub_agents,
+            graph_sub_agents=graph_sub_agents,
             tools=data.get("tools", []),
             prompts=data.get("prompts", {}),
             memory_config=MemoryConfig.from_dict(mem_data) if mem_data else MemoryConfig(),
@@ -95,6 +105,10 @@ class AgentDef:
             "declarative_sub_agents": {
                 n: {"strategy": d.strategy, "tools": d.tools, "system_prompt": d.system_prompt, "strategy_config": d.strategy_config}
                 for n, d in self.declarative_sub_agents.items()
+            },
+            "graph_sub_agents": {
+                n: {"name": g.name, "nodes": len(g.nodes), "edges": len(g.edges)}
+                for n, g in self.graph_sub_agents.items()
             },
             "tools": self.tools,
             "prompts": self.prompts,

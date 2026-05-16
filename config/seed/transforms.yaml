@@ -1,0 +1,17 @@
+# ArtiPivot Transform Configuration Seed
+#
+# Purpose: Loaded on first startup, then managed via REST API at runtime.
+# Usage: Fill in values and start the service -- configure once.
+#
+# Each transform maps a logical name to a Python module + function.
+# Function signature: (data: dict) -> dict
+# Both sync and async functions are supported.
+
+transforms:
+  # merge_results:
+  #   module: my_transforms.merge
+  #   function: merge_results
+
+  # extract_metrics:
+  #   module: my_transforms.extract
+  #   function: extract_metrics

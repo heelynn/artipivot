@@ -8,8 +8,10 @@ from artipivot.agents.declarative import build_declarative_subagent
 from artipivot.agents.programmatic import build_programmatic_subagent
 from artipivot.gateway.agent_def import AgentDef
 from artipivot.gateway.gateway import AgentGateway
+from artipivot.graph.dsl import GraphDef, build_dsl_graph
 from artipivot.graph.factory import GraphFactory
 from artipivot.tools.registry import ToolRegistry
+from artipivot.transforms.registry import TransformRegistry
 
 
 class AgentRegistry:
@@ -20,10 +22,13 @@ class AgentRegistry:
         gateway: AgentGateway,
         graph_factory: GraphFactory,
         tool_registry: ToolRegistry,
+        *,
+        transform_registry: TransformRegistry | None = None,
     ) -> None:
         self._gateway = gateway
         self._factory = graph_factory
         self._tools = tool_registry
+        self._transforms = transform_registry or TransformRegistry()
         self._defs: dict[str, AgentDef] = {}
 
     def register_def(
@@ -67,5 +72,14 @@ class AgentRegistry:
         for name, defn in agent_def.declarative_sub_agents.items():
             tool_node = self._tools.get_tool_node(defn.tools)
             result[name] = build_declarative_subagent(defn, tool_node)
+
+        # DSL graph sub-agents
+        for name, graph_def in agent_def.graph_sub_agents.items():
+            result[name] = build_dsl_graph(
+                graph_def,
+                tool_registry=self._tools,
+                transform_registry=self._transforms,
+                compiled_sub_agents=result,  # allow sub_agent refs to earlier sub-agents
+            )
 
         return result
