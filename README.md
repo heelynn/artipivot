@@ -1,6 +1,6 @@
 # ArtiPivot
 
-**生产级多 Agent 编排框架** — 三层解耦，子代理热加载，Transform 数据编排，251 个测试全部通过。
+**生产级多 Agent 编排框架** — 三层解耦，子代理热加载，Transform 数据编排，288 个测试全部通过。
 
 LangGraph v1.2 · FastAPI · structlog · 可插拔存储
 
@@ -9,10 +9,22 @@ LangGraph v1.2 · FastAPI · structlog · 可插拔存储
 ## 30 秒体验
 
 ```python
+# 最简启动 — 一行代码创建单 Agent 服务
+from artipivot.quickstart import quickstart
+
+app = quickstart(
+    strategy="react",
+    tools=["web_search", "code_exec"],
+    system_prompt="You are a coding assistant.",
+)
+# uvicorn 或 app.run 即可启动
+```
+
+```python
+# 完整三层配置方式
 from artipivot.api.server import create_app, init_app
 import uvicorn
 
-# 启动服务器（首次自动从 config/seed/ 加载种子配置）
 init_app()
 app = create_app()
 uvicorn.run(app, port=8000)
@@ -63,6 +75,10 @@ curl -X POST http://localhost:8000/api/v1/chat/research_agent \
 │                                                           │
 │  ┌─ 图拓扑 ─────────────────────────────────────────┐    │
 │  │  策略模板 ReAct/CoT/FC │ Graph DSL YAML 自定义图  │    │
+│  │  ├ 循环保护 max_iterations                        │    │
+│  │  ├ Human-in-the-loop interrupt                    │    │
+│  │  ├ 节点级 retry RetryPolicy                       │    │
+│  │  └ 节点级多模型 model override                     │    │
 │  └──────────────────────────────────────────────────┘    │
 │  ┌─ 数据编排 ───────────────────────────────────────┐    │
 │  │  Transform 注册表 — 按名引用，替换 ≠ 重建图       │    │
@@ -78,6 +94,7 @@ curl -X POST http://localhost:8000/api/v1/chat/research_agent \
 ├──────────────────────────────────────────────────────────┤
 │  横切 · 记忆（三层 State/Checkpointer/Store）             │
 │  横切 · 日志（8 通道 structlog + trace_id 全链路）        │
+│  横切 · 可视化（Mermaid 流程图 + Admin API）              │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -130,29 +147,41 @@ sub_agents:
 sub_agents:
   research_and_code:
     graph:
+      max_iterations: 15            # 循环保护（P1）
       nodes:
         search:   { type: tool, tool: web_search }
-        execute:  { type: tool, tool: code_exec }
+        execute:  { type: tool, tool: code_exec, retry: { max_attempts: 3, delay_seconds: 1 } }
         merge:    { type: transform, handler: merge_results }
-        respond:  { type: llm, system_prompt: "Compose a response." }
+        respond:  { type: llm, system_prompt: "Compose a response.", model: { provider: anthropic, name: claude-sonnet-4-6 } }
+        review:   { type: llm, system_prompt: "Review changes", interrupt: before }
       edges:
         - { from: START, to: search }
         - { from: START, to: execute }       # 并行扇出
         - { from: search, to: merge }
         - { from: execute, to: merge }        # 扇入合并
         - { from: merge, to: respond }
-        - { from: respond, to: END }
+        - { from: respond, to: review }
+        - { from: review, to: END }
 ```
 
 5 种节点类型：
 
 | type | 说明 | 引用来源 |
 |------|------|---------|
-| `llm` | LLM 调用 | runtime context 中的 model |
+| `llm` | LLM 调用 | runtime context 中的 model，或节点级 `model` 覆盖 |
 | `tool` | 单工具执行 | ToolRegistry |
 | `tools` | 多工具 ToolNode | ToolRegistry |
 | `transform` | 数据变换 | TransformRegistry（按名引用，支持热加载） |
 | `sub_agent` | 嵌套子代理 | 引用同 Agent 内其他已编译图 |
+
+DSL 增强（P0-P3）：
+
+| 特性 | YAML 语法 | 说明 |
+|------|----------|------|
+| **循环保护** | `max_iterations: N` | 图级，限制最大迭代次数 |
+| **Human-in-the-loop** | `interrupt: before/after` | 节点级，暂停等人工审批后恢复 |
+| **节点重试** | `retry: { max_attempts: 3, delay_seconds: 1 }` | 节点级，RetryPolicy 自动包装 |
+| **多模型** | `model: { provider: anthropic, name: claude-haiku-4-5 }` | 节点级，覆盖默认模型 |
 
 条件路由三种机制：字段映射（读 state 字段映射到目标节点）、内置函数（`has_tool_calls`）、Transform 路由（复用 TransformRegistry，支持热加载）。详见 [graph_dsl.md](doc/modules/graph_dsl.md)。
 
@@ -363,6 +392,8 @@ TransformWatcher.apply() → registry.register_module()
 GET    /admin/transforms              # 列出所有已注册 Transform
 POST   /admin/transforms/register     # 运行时注册（即时生效）
 DELETE /admin/transforms/{name}        # 注销
+GET    /admin/graph/{agent_id}/mermaid   # 获取 DSL 图的 Mermaid 流程图
+GET    /admin/graph/{agent_id}/structure # 获取 DSL 图的结构 JSON
 ```
 
 ---
@@ -402,7 +433,7 @@ artipivot/
 ├── src/artipivot/
 │   ├── api/                    # FastAPI（REST + Admin API）
 │   ├── gateway/                # 多主 Agent 分发与注册
-│   ├── graph/                  # LangGraph 图定义、路由、DSL
+│   ├── graph/                  # LangGraph 图定义、路由、DSL、可视化
 │   ├── agents/                 # 子代理 + 策略引擎（ReAct/CoT/FC）
 │   ├── tools/                  # 工具注册表 + MCP 适配器
 │   ├── memory/                 # 三层记忆 + 上下文压缩
@@ -413,10 +444,11 @@ artipivot/
 │   ├── resilience/             # 熔断/重试/限流
 │   ├── transforms/             # Transform 注册表 + 热加载 + 图节点
 │   ├── observability/          # 8 通道日志 + OTel
+│   ├── quickstart.py           # 一行代码启动（P2）
 │   └── cli/                    # CLI（Typer）
 │
-├── doc/modules/                # 模块详细文档（11 个）
-└── tests/                      # 251 个单元测试
+├── doc/modules/                # 模块详细文档（12 个）
+└── tests/                      # 288 个单元测试
 ```
 
 ---
@@ -428,7 +460,15 @@ artipivot/
 uv sync --dev
 
 # 测试
-uv run pytest tests/ -v          # 251 个测试
+uv run pytest tests/ -v          # 288 个测试
+
+# 最简启动（P2 quickstart）
+uv run python -c "
+from artipivot.quickstart import quickstart
+import uvicorn
+app = quickstart(tools=['web_search'], system_prompt='You are a helper.')
+uvicorn.run(app, port=8000)
+"
 
 # 交互式 demo（需 API Key）
 export ANTHROPIC_API_KEY=sk-...
@@ -456,7 +496,8 @@ uv run artipivot plugin init my_plugin --template react
 | 多主 Agent | [multi_agent.md](doc/modules/multi_agent.md) | AgentDef、AgentRegistry、YAML 声明、五维隔离 |
 | 插件系统 | [plugins.md](doc/modules/plugins.md) | PluginManager、GraphRebuilder 热重建、PluginWatcher |
 | Transform | [transforms.md](doc/modules/transforms.md) | TransformRegistry、热加载、Entry Points、图节点集成 |
-| Graph DSL | [graph_dsl.md](doc/modules/graph_dsl.md) | YAML 自定义图拓扑、5 种节点、条件路由、热加载 |
+| Graph DSL | [graph_dsl.md](doc/modules/graph_dsl.md) | YAML 自定义图拓扑、5 种节点、条件路由、HITL、重试、多模型 |
+| 可视化 | [visual.md](doc/modules/visual.md) | Mermaid 流程图生成、Admin API 图结构查询 |
 | 容错 | [resilience.md](doc/modules/resilience.md) | CircuitBreaker、RetryPolicy、RateLimiter |
 | 可观测 + API | [observability_api.md](doc/modules/observability_api.md) | 8 通道日志、OpenTelemetry、REST/CLI 参考 |
 
@@ -486,6 +527,8 @@ uv run artipivot plugin init my_plugin --template react
 | 模型供应商 | `_factories[provider]` | 添加工厂函数 | ✓ |
 | 子代理策略 | `Strategy` ABC | `register_strategy()` | — |
 | DSL 图 | `GraphDef` | YAML `graph:` 或插件 manifest | — |
+| Quickstart | `quickstart()` | `quickstart(strategy=..., tools=...)` | — |
+| 图可视化 | `graph_to_mermaid()` | Admin API `/admin/graph/{id}/mermaid` | — |
 | 自定义工具 | `@tool` 装饰器 | `registry.register(tool)` | — |
 | 存储后端 | `DocumentStore` | 继承 + 工厂函数 | — |
 | Checkpointer | `BaseCheckpointSaver` | `register_checkpointer_backend()` | — |

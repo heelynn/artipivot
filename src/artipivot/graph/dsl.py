@@ -13,20 +13,19 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-import structlog
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 
 from artipivot.graph.state import SubAgentState
+from artipivot.observability import log, serialize
 from artipivot.transforms.nodes import make_transform_node
-
-logger = structlog.get_logger(__name__)
 
 # ── Valid node types ──
 
 VALID_NODE_TYPES = frozenset({"llm", "tool", "tools", "transform", "sub_agent"})
+_VALID_INTERRUPTS = frozenset({"before", "after"})
 
 # User-facing names in YAML → LangGraph internal constants
 _RESOLVE = {"START": START, "END": END}
@@ -52,6 +51,12 @@ class NodeDef:
     system_prompt: str = ""
     # type="sub_agent"
     ref: str | None = None
+    # human-in-the-loop
+    interrupt: str | None = None  # "before" | "after" | None
+    # retry
+    retry: dict | None = None  # {"max_attempts": 3, "delay_seconds": 1}
+    # per-node model override (type="llm")
+    model: dict | None = None  # {"provider": "anthropic", "name": "claude-haiku-4-5"}
 
 
 @dataclass
@@ -184,6 +189,7 @@ class GraphDef:
     name: str
     nodes: dict[str, NodeDef]
     edges: list[EdgeDef]
+    max_iterations: int | None = None
 
 
 # ── Parsing ──
@@ -207,6 +213,20 @@ def parse_graph_def(name: str, graph_cfg: dict) -> GraphDef:
                 f"Graph '{name}', node '{node_name}': "
                 f"invalid type '{node_type}', must be one of {sorted(VALID_NODE_TYPES)}"
             )
+        interrupt = node_cfg.get("interrupt")
+        if interrupt is not None and interrupt not in _VALID_INTERRUPTS:
+            raise ValueError(
+                f"Graph '{name}', node '{node_name}': "
+                f"invalid interrupt '{interrupt}', must be one of {sorted(_VALID_INTERRUPTS)}"
+            )
+        retry_cfg = node_cfg.get("retry")
+        if retry_cfg is not None:
+            if "max_attempts" not in retry_cfg:
+                raise ValueError(
+                    f"Graph '{name}', node '{node_name}': "
+                    "retry requires 'max_attempts'"
+                )
+
         nodes[node_name] = NodeDef(
             name=node_name,
             type=node_type,
@@ -217,6 +237,9 @@ def parse_graph_def(name: str, graph_cfg: dict) -> GraphDef:
             output_key=node_cfg.get("output_key", "metadata"),
             system_prompt=node_cfg.get("system_prompt", ""),
             ref=node_cfg.get("ref"),
+            interrupt=interrupt,
+            retry=retry_cfg,
+            model=node_cfg.get("model"),
         )
 
     # Parse edges
@@ -286,7 +309,14 @@ def parse_graph_def(name: str, graph_cfg: dict) -> GraphDef:
             )
         )
 
-    return GraphDef(name=name, nodes=nodes, edges=edges)
+    max_iterations = graph_cfg.get("max_iterations")
+    if max_iterations is not None:
+        if not isinstance(max_iterations, int) or max_iterations < 1:
+            raise ValueError(
+                f"Graph '{name}': 'max_iterations' must be a positive integer"
+            )
+
+    return GraphDef(name=name, nodes=nodes, edges=edges, max_iterations=max_iterations)
 
 
 def _parse_condition(cond_cfg: dict, graph_name: str, edge_idx: int) -> ConditionDef:
@@ -381,17 +411,23 @@ def build_dsl_graph(
     tool_registry,
     transform_registry,
     compiled_sub_agents: dict[str, CompiledStateGraph] | None = None,
+    checkpointer=None,
+    model_provider=None,
 ) -> CompiledStateGraph:
     """Build a compiled StateGraph from a GraphDef.
 
     Creates node functions, wires edges, and compiles the graph.
+    Supports human-in-the-loop via interrupt and checkpointer.
     """
     compiled_sub_agents = compiled_sub_agents or {}
     builder = StateGraph(SubAgentState)
 
     # Add nodes
     for node_name, node_def in graph_def.nodes.items():
-        node_fn = _build_node(node_def, tool_registry, transform_registry, compiled_sub_agents)
+        node_fn = _build_node(
+            node_def, tool_registry, transform_registry,
+            compiled_sub_agents, model_provider,
+        )
         builder.add_node(node_name, node_fn)
 
     # Add edges
@@ -410,7 +446,27 @@ def build_dsl_graph(
             # Fixed single edge
             builder.add_edge(edge.source, edge.target)
 
-    return builder.compile()
+    # Collect interrupt nodes
+    interrupt_before = [
+        n.name for n in graph_def.nodes.values() if n.interrupt == "before"
+    ]
+    interrupt_after = [
+        n.name for n in graph_def.nodes.values() if n.interrupt == "after"
+    ]
+
+    compile_kwargs: dict[str, Any] = {}
+    if checkpointer is not None:
+        compile_kwargs["checkpointer"] = checkpointer
+    if interrupt_before:
+        compile_kwargs["interrupt_before"] = interrupt_before
+    if interrupt_after:
+        compile_kwargs["interrupt_after"] = interrupt_after
+
+    graph = builder.compile(**compile_kwargs)
+    # Store max_iterations as attribute for callers to inject into config
+    if graph_def.max_iterations is not None:
+        graph.max_iterations = graph_def.max_iterations
+    return graph
 
 
 # ── Node factories ──
@@ -421,37 +477,57 @@ def _build_node(
     tool_registry,
     transform_registry,
     compiled_sub_agents: dict[str, CompiledStateGraph],
+    model_provider=None,
 ) -> Any:
     """Create a LangGraph node function from a NodeDef."""
     if node_def.type == "llm":
-        return _make_llm_node(node_def)
-    if node_def.type == "tool":
-        return _make_tool_node(node_def, tool_registry)
-    if node_def.type == "tools":
-        return _make_tools_node(node_def, tool_registry)
-    if node_def.type == "transform":
-        return make_transform_node(
+        node_fn = _make_llm_node(node_def, model_provider)
+    elif node_def.type == "tool":
+        node_fn = _make_tool_node(node_def, tool_registry)
+    elif node_def.type == "tools":
+        node_fn = _make_tools_node(node_def, tool_registry)
+    elif node_def.type == "transform":
+        node_fn = make_transform_node(
             node_def.handler,
             transform_registry,
             input_key=node_def.input_key,
             output_key=node_def.output_key,
         )
-    if node_def.type == "sub_agent":
+    elif node_def.type == "sub_agent":
+        # sub_agent returns a compiled graph, not a function — no retry wrapping
         return _make_sub_agent_node(node_def, compiled_sub_agents)
-    raise ValueError(f"Unknown node type: {node_def.type}")
+    else:
+        raise ValueError(f"Unknown node type: {node_def.type}")
+
+    # Wrap with retry if configured
+    if node_def.retry:
+        node_fn = _wrap_with_retry(node_fn, node_def.retry, node_def.name)
+    return node_fn
 
 
-def _make_llm_node(node_def: NodeDef) -> Callable:
+def _make_llm_node(node_def: NodeDef, model_provider=None) -> Callable:
     """Create an LLM call node."""
     system_prompt = node_def.system_prompt
+    model_cfg = node_def.model
+    _model_provider = model_provider
 
     async def llm_node(state: SubAgentState, runtime) -> dict:
-        from langgraph.runtime import Runtime
-
         from artipivot.graph.context import AgentContext
 
-        rt: Runtime[AgentContext] = runtime
-        model = rt.context.model
+        # Resolve model: per-node config > runtime context
+        if model_cfg and _model_provider is not None:
+            from artipivot.models.config import ModelConfig
+
+            cfg = ModelConfig(**model_cfg)
+            factory = _model_provider._factories.get(cfg.provider)
+            if factory is None:
+                raise ValueError(f"Unknown provider: {cfg.provider}")
+            model = factory(cfg)
+        else:
+            from langgraph.runtime import Runtime
+
+            rt: Runtime[AgentContext] = runtime
+            model = rt.context.model
 
         messages = []
         if system_prompt:
@@ -460,11 +536,37 @@ def _make_llm_node(node_def: NodeDef) -> Callable:
             messages.append(HumanMessage(content=state["query"]))
         messages.extend(state.get("messages", []))
 
+        log.info("llm.call", node=node_def.name, messages_count=len(messages))
+        log.debug("llm.input", node=node_def.name, messages=[serialize(m) for m in messages])
+
         response = await model.ainvoke(messages)
+
+        tool_calls = getattr(response, "tool_calls", [])
+        log.info("llm.response", node=node_def.name, tool_calls=len(tool_calls))
+        log.debug("llm.output", node=node_def.name, response=serialize(response))
+
         return {"messages": [response]}
 
     llm_node.__name__ = f"llm:{node_def.name}"
     return llm_node
+
+
+def _wrap_with_retry(node_fn: Callable, retry_cfg: dict, node_name: str) -> Callable:
+    """Wrap a node function with RetryPolicy."""
+    from artipivot.resilience.retry import RetryPolicy
+
+    policy = RetryPolicy(
+        max_retries=retry_cfg.get("max_attempts", 3) - 1,
+        base_delay=retry_cfg.get("delay_seconds", 1.0),
+    )
+
+    async def retried_node(state, runtime):
+        async def _inner(s, r):
+            return await node_fn(s, r)
+        return await policy.execute(_inner, state, runtime)
+
+    retried_node.__name__ = f"retry:{node_name}"
+    return retried_node
 
 
 def _make_tool_node(node_def: NodeDef, tool_registry) -> Callable:
@@ -483,7 +585,15 @@ def _make_tool_node(node_def: NodeDef, tool_registry) -> Callable:
             return {}
         # Execute the first tool call
         tc = last_msg.tool_calls[0]
+
+        log.info("tool.call", tool_name=tool_name, node=node_def.name)
+        log.debug("tool.input", tool_name=tool_name, node=node_def.name, args=tc.get("args", {}))
+
         result = await tool.ainvoke(tc["args"])
+
+        log.info("tool.result", tool_name=tool_name, node=node_def.name, status="ok")
+        log.debug("tool.output", tool_name=tool_name, node=node_def.name, result=str(result)[:1000])
+
         return {"messages": [AIMessage(content=str(result))]}
 
     tool_node.__name__ = f"tool:{node_def.name}"

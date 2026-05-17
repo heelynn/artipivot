@@ -1,36 +1,35 @@
-"""structlog configuration — multi-channel JSON logging with rotation."""
+"""structlog configuration — single-file, level-based logging with contextvars auto-injection."""
 
 from __future__ import annotations
 
 import logging
+import os
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 import orjson
 import structlog
 
+_SENSITIVE_KEYS = frozenset({"api_key", "token", "authorization", "password", "secret"})
 
-# Channel → retention config
-CHANNELS: dict[str, dict] = {
-    "main": {"retention_days": 30},
-    "trace": {"retention_days": 7},
-    "session": {"retention_days": 30},
-    "memory": {"retention_days": 30},
-    "llm": {"retention_days": 30},
-    "tool": {"retention_days": 14},
-    "error": {"retention_days": 90},
-    "audit": {"retention_days": 365},
-}
+
+def _mask_sensitive(logger, method_name: str, event_dict: dict) -> dict:
+    """Mask sensitive fields in log output."""
+    for key in _SENSITIVE_KEYS:
+        if key in event_dict:
+            val = str(event_dict[key])
+            event_dict[key] = val[:4] + "***" if len(val) > 4 else "***"
+    return event_dict
+
 
 _SHARED_PROCESSORS = [
     structlog.contextvars.merge_contextvars,
-    structlog.stdlib.add_logger_name,
     structlog.stdlib.add_log_level,
-    structlog.stdlib.PositionalArgumentsFormatter(),
     structlog.processors.TimeStamper(fmt="iso"),
     structlog.processors.StackInfoRenderer(),
     structlog.processors.format_exc_info,
     structlog.processors.UnicodeDecoder(),
+    _mask_sensitive,
 ]
 
 
@@ -39,8 +38,14 @@ def _json_renderer(logger, method_name: str, event_dict: dict) -> str:
     return orjson.dumps(event_dict, default=str).decode()
 
 
-def configure_logging(log_dir: str = "logs", level: str = "INFO") -> None:
-    """Configure structlog with multi-channel file handlers."""
+def configure_logging(log_dir: str = "logs", level: str | None = None) -> None:
+    """Configure structlog with two files: artipivot.log (all levels) + error.log (errors only).
+
+    Level resolution: explicit *level* param > ARTIPIVOT_LOG_LEVEL env var > "INFO".
+    """
+    effective_level = level or os.environ.get("ARTIPIVOT_LOG_LEVEL", "INFO")
+    numeric_level = getattr(logging, effective_level.upper(), logging.INFO)
+
     log_path = Path(log_dir)
     log_path.mkdir(parents=True, exist_ok=True)
 
@@ -62,28 +67,45 @@ def configure_logging(log_dir: str = "logs", level: str = "INFO") -> None:
         foreign_pre_chain=_SHARED_PROCESSORS,
     )
 
-    for channel, config in CHANNELS.items():
-        handler = TimedRotatingFileHandler(
-            str(log_path / f"{channel}.log"),
-            when="midnight",
-            backupCount=config["retention_days"],
-            encoding="utf-8",
-        )
-        handler.setFormatter(formatter)
-        handler.setLevel(getattr(logging, level.upper(), logging.INFO))
+    # Main log file — all events, level-filtered
+    main_handler = TimedRotatingFileHandler(
+        str(log_path / "artipivot.log"),
+        when="midnight",
+        backupCount=30,
+        encoding="utf-8",
+    )
+    main_handler.setFormatter(formatter)
+    main_handler.setLevel(numeric_level)
 
-        ch_logger = logging.getLogger(f"artipivot.{channel}")
-        ch_logger.handlers.clear()
-        ch_logger.addHandler(handler)
-        ch_logger.setLevel(logging.DEBUG)
+    root = logging.getLogger("artipivot")
+    root.handlers.clear()
+    root.addHandler(main_handler)
+    root.setLevel(logging.DEBUG)
 
-    # error channel also goes to console for dev convenience
-    console = logging.StreamHandler()
-    console.setFormatter(formatter)
-    console.setLevel(logging.ERROR)
-    logging.getLogger("artipivot.error").addHandler(console)
+    # Error-only log file — for alerting
+    error_handler = TimedRotatingFileHandler(
+        str(log_path / "error.log"),
+        when="midnight",
+        backupCount=90,
+        encoding="utf-8",
+    )
+    error_handler.setFormatter(formatter)
+    error_handler.setLevel(logging.ERROR)
+    root.addHandler(error_handler)
+
+    # DEBUG mode: also output to console
+    if numeric_level <= logging.DEBUG:
+        console = logging.StreamHandler()
+        console.setFormatter(formatter)
+        console.setLevel(logging.DEBUG)
+        root.addHandler(console)
 
 
-def get_logger(channel: str) -> structlog.stdlib.BoundLogger:
-    """Get a logger for the given channel."""
-    return structlog.get_logger(f"artipivot.{channel}")
+def serialize(obj, max_len: int = 2000) -> str | dict:
+    """Safely serialize a LangChain message or response for debug logging."""
+    try:
+        if hasattr(obj, "content"):
+            return {"type": type(obj).__name__, "content": str(obj.content)[:max_len]}
+        return str(obj)[:max_len]
+    except Exception:
+        return "<unserializable>"

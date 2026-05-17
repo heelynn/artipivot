@@ -643,3 +643,506 @@ class TestBuildConditionalGraph:
             }
         )
         assert result2["metadata"] == {"name": "hello"}
+
+
+# ── Human-in-the-loop ──
+
+
+class TestInterruptParsing:
+    def test_parse_interrupt_before(self):
+        gd = parse_graph_def(
+            "hitl",
+            {
+                "nodes": {
+                    "step1": {"type": "transform", "handler": "upper"},
+                    "review": {"type": "llm", "interrupt": "before"},
+                },
+                "edges": [
+                    {"from": "START", "to": "step1"},
+                    {"from": "step1", "to": "review"},
+                    {"from": "review", "to": "END"},
+                ],
+            },
+        )
+        assert gd.nodes["review"].interrupt == "before"
+        assert gd.nodes["step1"].interrupt is None
+
+    def test_parse_interrupt_after(self):
+        gd = parse_graph_def(
+            "hitl",
+            {
+                "nodes": {
+                    "step1": {"type": "transform", "handler": "upper"},
+                    "review": {"type": "llm", "interrupt": "after"},
+                },
+                "edges": [
+                    {"from": "START", "to": "step1"},
+                    {"from": "step1", "to": "review"},
+                    {"from": "review", "to": "END"},
+                ],
+            },
+        )
+        assert gd.nodes["review"].interrupt == "after"
+
+    def test_invalid_interrupt_raises(self):
+        with pytest.raises(ValueError, match="invalid interrupt"):
+            parse_graph_def(
+                "bad",
+                {
+                    "nodes": {"step1": {"type": "llm", "interrupt": "invalid"}},
+                    "edges": [{"from": "START", "to": "step1"}],
+                },
+            )
+
+
+class TestInterruptBuild:
+    def test_build_with_checkpointer_and_interrupt(self):
+        """Build a graph with checkpointer + interrupt, verify compilation succeeds."""
+        from langgraph.checkpoint.memory import MemorySaver
+
+        treg = _make_transform_registry()
+
+        gd = parse_graph_def(
+            "hitl",
+            {
+                "nodes": {
+                    "step1": {"type": "transform", "handler": "upper"},
+                    "review": {"type": "transform", "handler": "upper", "interrupt": "before"},
+                },
+                "edges": [
+                    {"from": "START", "to": "step1"},
+                    {"from": "step1", "to": "review"},
+                    {"from": "review", "to": "END"},
+                ],
+            },
+        )
+        graph = build_dsl_graph(
+            gd,
+            tool_registry=ToolRegistry(),
+            transform_registry=treg,
+            checkpointer=MemorySaver(),
+        )
+        assert graph is not None
+
+    @pytest.mark.asyncio
+    async def test_hitl_interrupt_before_pauses(self):
+        """Graph with interrupt_before should pause at the interrupt node."""
+        from langgraph.checkpoint.memory import MemorySaver
+
+        treg = _make_transform_registry()
+        checkpointer = MemorySaver()
+
+        gd = parse_graph_def(
+            "hitl_pause",
+            {
+                "nodes": {
+                    "step1": {"type": "transform", "handler": "upper"},
+                    "step2": {"type": "transform", "handler": "upper", "interrupt": "before"},
+                },
+                "edges": [
+                    {"from": "START", "to": "step1"},
+                    {"from": "step1", "to": "step2"},
+                    {"from": "step2", "to": "END"},
+                ],
+            },
+        )
+        graph = build_dsl_graph(
+            gd,
+            tool_registry=ToolRegistry(),
+            transform_registry=treg,
+            checkpointer=checkpointer,
+        )
+
+        config = {"configurable": {"thread_id": "test-hitl-1"}}
+        # First invoke should stop at step2 (interrupt_before)
+        result = await graph.ainvoke(
+            {"messages": [], "query": "", "artifacts": [], "metadata": {"name": "hello"}},
+            config=config,
+        )
+        # step1 should have executed (upper transform)
+        assert result["metadata"] == {"name": "HELLO"}
+
+        # Check that there are tasks pending (interrupt happened)
+        state = await graph.aget_state(config)
+        # The next step should be step2
+        assert state.next is not None and len(state.next) > 0
+
+    @pytest.mark.asyncio
+    async def test_hitl_resume_after_interrupt(self):
+        """After interrupt, resume execution and the graph completes."""
+        from langgraph.checkpoint.memory import MemorySaver
+
+        treg = _make_transform_registry()
+        checkpointer = MemorySaver()
+
+        gd = parse_graph_def(
+            "hitl_resume",
+            {
+                "nodes": {
+                    "step1": {"type": "transform", "handler": "upper"},
+                    "step2": {"type": "transform", "handler": "upper", "interrupt": "before"},
+                },
+                "edges": [
+                    {"from": "START", "to": "step1"},
+                    {"from": "step1", "to": "step2"},
+                    {"from": "step2", "to": "END"},
+                ],
+            },
+        )
+        graph = build_dsl_graph(
+            gd,
+            tool_registry=ToolRegistry(),
+            transform_registry=treg,
+            checkpointer=checkpointer,
+        )
+
+        config = {"configurable": {"thread_id": "test-hitl-2"}}
+        # First invoke: stops at step2
+        await graph.ainvoke(
+            {"messages": [], "query": "", "artifacts": [], "metadata": {"name": "hello"}},
+            config=config,
+        )
+
+        # Resume: pass None to continue from interrupt
+        result = await graph.ainvoke(None, config=config)
+        # step2 executed: upper("HELLO") → "HELLO" (already upper)
+        assert result["metadata"] == {"name": "HELLO"}
+        # Graph should be complete
+        state = await graph.aget_state(config)
+        assert state.next == ()
+
+    def test_build_without_checkpointer_no_interrupt(self):
+        """Without checkpointer, build succeeds but interrupt won't work at runtime."""
+        treg = _make_transform_registry()
+        gd = parse_graph_def(
+            "no_cp",
+            {
+                "nodes": {
+                    "step1": {"type": "transform", "handler": "upper"},
+                },
+                "edges": [
+                    {"from": "START", "to": "step1"},
+                    {"from": "step1", "to": "END"},
+                ],
+            },
+        )
+        # No interrupt nodes, no checkpointer — should work fine
+        graph = build_dsl_graph(
+            gd,
+            tool_registry=ToolRegistry(),
+            transform_registry=treg,
+        )
+        assert graph is not None
+
+
+# ── P1: max_iterations ──
+
+
+class TestMaxIterationsParsing:
+    """Test max_iterations field parsing."""
+
+    def test_parse_max_iterations(self):
+        gd = parse_graph_def(
+            "loop",
+            {
+                "max_iterations": 15,
+                "nodes": {
+                    "think": {"type": "llm"},
+                    "act": {"type": "transform", "handler": "upper"},
+                },
+                "edges": [
+                    {"from": "START", "to": "think"},
+                    {"from": "think", "to": "act"},
+                    {"from": "act", "to": "END"},
+                ],
+            },
+        )
+        assert gd.max_iterations == 15
+
+    def test_parse_no_max_iterations(self):
+        gd = parse_graph_def(
+            "no_limit",
+            {
+                "nodes": {
+                    "step1": {"type": "transform", "handler": "upper"},
+                },
+                "edges": [
+                    {"from": "START", "to": "step1"},
+                    {"from": "step1", "to": "END"},
+                ],
+            },
+        )
+        assert gd.max_iterations is None
+
+    def test_invalid_max_iterations_raises(self):
+        with pytest.raises(ValueError, match="positive integer"):
+            parse_graph_def(
+                "bad",
+                {
+                    "max_iterations": 0,
+                    "nodes": {"s": {"type": "llm"}},
+                    "edges": [{"from": "START", "to": "s"}, {"from": "s", "to": "END"}],
+                },
+            )
+
+    def test_negative_max_iterations_raises(self):
+        with pytest.raises(ValueError, match="positive integer"):
+            parse_graph_def(
+                "neg",
+                {
+                    "max_iterations": -1,
+                    "nodes": {"s": {"type": "llm"}},
+                    "edges": [{"from": "START", "to": "s"}, {"from": "s", "to": "END"}],
+                },
+            )
+
+
+class TestMaxIterationsBuild:
+    """Test max_iterations is stored on compiled graph for config injection."""
+
+    def test_max_iterations_attribute(self):
+        treg = _make_transform_registry()
+        gd = parse_graph_def(
+            "limited",
+            {
+                "max_iterations": 5,
+                "nodes": {
+                    "step1": {"type": "transform", "handler": "upper"},
+                },
+                "edges": [
+                    {"from": "START", "to": "step1"},
+                    {"from": "step1", "to": "END"},
+                ],
+            },
+        )
+        graph = build_dsl_graph(
+            gd, tool_registry=ToolRegistry(), transform_registry=treg
+        )
+        assert graph.max_iterations == 5
+
+    def test_no_max_iterations_no_attribute(self):
+        treg = _make_transform_registry()
+        gd = parse_graph_def(
+            "unlimited",
+            {
+                "nodes": {
+                    "step1": {"type": "transform", "handler": "upper"},
+                },
+                "edges": [
+                    {"from": "START", "to": "step1"},
+                    {"from": "step1", "to": "END"},
+                ],
+            },
+        )
+        graph = build_dsl_graph(
+            gd, tool_registry=ToolRegistry(), transform_registry=treg
+        )
+        # No max_iterations attribute when not set
+        assert not hasattr(graph, "max_iterations")
+
+    @pytest.mark.asyncio
+    async def test_loop_stops_at_recursion_limit(self):
+        """A self-looping graph should stop when recursion_limit is hit."""
+        treg = _make_transform_registry()
+        gd = parse_graph_def(
+            "loop",
+            {
+                "max_iterations": 3,
+                "nodes": {
+                    "loop_node": {"type": "transform", "handler": "upper"},
+                },
+                "edges": [
+                    {"from": "START", "to": "loop_node"},
+                    {"from": "loop_node", "to": "loop_node"},  # self-loop
+                ],
+            },
+        )
+        graph = build_dsl_graph(
+            gd, tool_registry=ToolRegistry(), transform_registry=treg
+        )
+        from langgraph.errors import GraphRecursionError
+
+        with pytest.raises(GraphRecursionError):
+            await graph.ainvoke(
+                {"messages": [], "query": "", "artifacts": [], "metadata": {"x": "a"}},
+                config={"recursion_limit": graph.max_iterations},
+            )
+
+
+# ── P3: Retry + Multi-model ──
+
+
+class TestRetryParsing:
+    """Test retry field parsing."""
+
+    def test_parse_retry(self):
+        gd = parse_graph_def(
+            "retry",
+            {
+                "nodes": {
+                    "call_api": {
+                        "type": "transform",
+                        "handler": "upper",
+                        "retry": {"max_attempts": 3, "delay_seconds": 1},
+                    },
+                },
+                "edges": [
+                    {"from": "START", "to": "call_api"},
+                    {"from": "call_api", "to": "END"},
+                ],
+            },
+        )
+        assert gd.nodes["call_api"].retry == {"max_attempts": 3, "delay_seconds": 1}
+
+    def test_parse_no_retry(self):
+        gd = parse_graph_def(
+            "no_retry",
+            {
+                "nodes": {
+                    "step1": {"type": "transform", "handler": "upper"},
+                },
+                "edges": [
+                    {"from": "START", "to": "step1"},
+                    {"from": "step1", "to": "END"},
+                ],
+            },
+        )
+        assert gd.nodes["step1"].retry is None
+
+    def test_retry_without_max_attempts_raises(self):
+        with pytest.raises(ValueError, match="max_attempts"):
+            parse_graph_def(
+                "bad_retry",
+                {
+                    "nodes": {
+                        "s": {
+                            "type": "transform",
+                            "handler": "upper",
+                            "retry": {"delay_seconds": 1},
+                        },
+                    },
+                    "edges": [
+                        {"from": "START", "to": "s"},
+                        {"from": "s", "to": "END"},
+                    ],
+                },
+            )
+
+
+class TestRetryBuild:
+    """Test retry wrapper behavior."""
+
+    @pytest.mark.asyncio
+    async def test_retry_succeeds_after_failures(self):
+        """Node retries and succeeds after initial failures."""
+        treg = _make_transform_registry()
+        call_count = 0
+
+        # Register a flaky transform
+        def flaky(data: dict) -> dict:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise RuntimeError("transient error")
+            return {k: v for k, v in data.items()}
+
+        treg.register("flaky", flaky)
+
+        gd = parse_graph_def(
+            "retry_test",
+            {
+                "nodes": {
+                    "flaky_node": {
+                        "type": "transform",
+                        "handler": "flaky",
+                        "retry": {"max_attempts": 3, "delay_seconds": 0},
+                    },
+                },
+                "edges": [
+                    {"from": "START", "to": "flaky_node"},
+                    {"from": "flaky_node", "to": "END"},
+                ],
+            },
+        )
+        graph = build_dsl_graph(gd, tool_registry=ToolRegistry(), transform_registry=treg)
+        result = await graph.ainvoke(
+            {"messages": [], "query": "", "artifacts": [], "metadata": {"x": "a"}}
+        )
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_retry_exhausted_raises(self):
+        """Node raises after all retries exhausted."""
+        from artipivot.resilience.retry import RetryExhaustedError
+
+        treg = _make_transform_registry()
+
+        def always_fail(data: dict) -> dict:
+            raise RuntimeError("permanent error")
+
+        treg.register("always_fail", always_fail)
+
+        gd = parse_graph_def(
+            "exhaust_test",
+            {
+                "nodes": {
+                    "fail_node": {
+                        "type": "transform",
+                        "handler": "always_fail",
+                        "retry": {"max_attempts": 2, "delay_seconds": 0},
+                    },
+                },
+                "edges": [
+                    {"from": "START", "to": "fail_node"},
+                    {"from": "fail_node", "to": "END"},
+                ],
+            },
+        )
+        graph = build_dsl_graph(gd, tool_registry=ToolRegistry(), transform_registry=treg)
+        with pytest.raises(RetryExhaustedError):
+            await graph.ainvoke(
+                {"messages": [], "query": "", "artifacts": [], "metadata": {"x": "a"}}
+            )
+
+
+class TestModelParsing:
+    """Test per-node model override parsing."""
+
+    def test_parse_model(self):
+        gd = parse_graph_def(
+            "multi_model",
+            {
+                "nodes": {
+                    "classify": {
+                        "type": "llm",
+                        "model": {"provider": "anthropic", "name": "claude-haiku-4-5"},
+                    },
+                    "generate": {
+                        "type": "llm",
+                        "model": {"provider": "openai", "name": "gpt-4o"},
+                    },
+                },
+                "edges": [
+                    {"from": "START", "to": "classify"},
+                    {"from": "classify", "to": "generate"},
+                    {"from": "generate", "to": "END"},
+                ],
+            },
+        )
+        assert gd.nodes["classify"].model == {"provider": "anthropic", "name": "claude-haiku-4-5"}
+        assert gd.nodes["generate"].model == {"provider": "openai", "name": "gpt-4o"}
+
+    def test_no_model_default(self):
+        gd = parse_graph_def(
+            "no_model",
+            {
+                "nodes": {
+                    "step1": {"type": "llm"},
+                },
+                "edges": [
+                    {"from": "START", "to": "step1"},
+                    {"from": "step1", "to": "END"},
+                ],
+            },
+        )
+        assert gd.nodes["step1"].model is None

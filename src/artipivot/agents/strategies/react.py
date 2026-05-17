@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -12,6 +14,7 @@ from artipivot.agents.strategies import register_strategy
 from artipivot.agents.strategies.base import Strategy
 from artipivot.graph.context import AgentContext
 from artipivot.graph.state import SubAgentState
+from artipivot.observability import log, bind, serialize
 
 
 class ReActStrategy(Strategy):
@@ -26,15 +29,29 @@ class ReActStrategy(Strategy):
     ) -> CompiledStateGraph:
         cfg = config or {}
         max_iterations = cfg.get("max_iterations", sub_def.max_iterations)
-        system_prompt = sub_def.system_prompt
-        # iteration counter stored in node closure
-        state: dict = {"iterations": 0, "max_iterations": max_iterations}
+        default_prompt = sub_def.system_prompt
+        sub_name = sub_def.name
+        state: dict = {"iterations": 0, "max_iterations": max_iterations, "start_time": None}
 
         async def llm_call(st: SubAgentState, runtime) -> dict:
             from langgraph.runtime import Runtime
 
             rt: Runtime[AgentContext] = runtime
             model = rt.context.model
+
+            if state["start_time"] is None:
+                state["start_time"] = time.perf_counter()
+                bind(sub_name=sub_name, strategy="react")
+                log.info("sub_agent.start")
+
+            # Runtime prompt lookup from ConfigCenter
+            system_prompt = default_prompt
+            ctx = rt.context
+            if ctx.config_center:
+                prompt_cfg = ctx.config_center.prompts.get(
+                    ctx.agent_id, "system", sub_name=sub_name
+                )
+                system_prompt = prompt_cfg.get("system", default_prompt)
 
             messages = []
             if system_prompt:
@@ -43,7 +60,15 @@ class ReActStrategy(Strategy):
                 messages.append(HumanMessage(content=st["query"]))
             messages.extend(st.get("messages", []))
 
+            bind(iteration=state["iterations"])
+            log.info("llm.call", messages_count=len(messages))
+            log.debug("llm.input", messages=[serialize(m) for m in messages])
+
             response = await model.ainvoke(messages)
+
+            tool_calls = getattr(response, "tool_calls", [])
+            log.info("llm.response", tool_calls=len(tool_calls), has_content=bool(response.content))
+            log.debug("llm.output", response=serialize(response))
 
             state["iterations"] += 1
             return {"messages": [response]}

@@ -1,4 +1,4 @@
-"""TraceLogger — request-level trace_id binding."""
+"""Trace context — request-level trace_id + sub-agent context binding."""
 
 from __future__ import annotations
 

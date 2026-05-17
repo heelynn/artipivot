@@ -9,6 +9,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from artipivot.graph.context import AgentContext
 from artipivot.graph.state import ArtiPivotState
 from artipivot.config.center import ConfigCenter
+from artipivot.observability import log
+from artipivot.observability import otel
 
 
 # Default classify prompt
@@ -36,7 +38,11 @@ async def classify(
         *state["messages"],
     ]
 
+    log.debug("classify.llm_input", messages_count=len(messages))
+
     response = await model.ainvoke(messages)
+
+    log.debug("classify.llm_output", raw_response=response.content)
 
     try:
         result = json.loads(response.content)
@@ -45,6 +51,10 @@ async def classify(
     except (json.JSONDecodeError, ValueError):
         intent = "general"
         confidence = 0.0
+
+    threshold = config_center.routing.get_threshold(agent_id)
+    log.info("classify.result", intent=intent, confidence=confidence, threshold=threshold)
+    otel.record_intent(intent, confidence=confidence)
 
     return {"intent": intent, "confidence": confidence}
 
@@ -60,7 +70,11 @@ def route_by_intent(
 
     threshold = config_center.routing.get_threshold(agent_id)
     if state["confidence"] < threshold:
+        log.info("route.fallback", intent=state["intent"],
+                 confidence=state["confidence"], reason="below_threshold")
         return "clarify"
 
     intent_map = config_center.routing.get_intent_map(agent_id)
-    return intent_map.get(state["intent"], "fallback")
+    target = intent_map.get(state["intent"], "fallback")
+    log.info("route.decision", intent=state["intent"], target=target)
+    return target

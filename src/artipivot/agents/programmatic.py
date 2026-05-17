@@ -11,6 +11,7 @@ from langgraph.graph.state import CompiledStateGraph
 from artipivot.agents.base import SubAgentDef
 from artipivot.graph.context import AgentContext
 from artipivot.graph.state import SubAgentState
+from artipivot.observability import log, bind, serialize
 
 
 def build_programmatic_subagent(
@@ -22,14 +23,29 @@ def build_programmatic_subagent(
     Topology: START → llm_call → conditional(should_continue) → {tools, END}
                tools → llm_call (loop)
     """
-    # Bind system prompt at build time
-    system_prompt = sub_def.system_prompt
+    default_prompt = sub_def.system_prompt
+    sub_name = sub_def.name
+    started: dict = {"flag": False}
 
     async def llm_call(state: SubAgentState, runtime) -> dict:
         from langgraph.runtime import Runtime
 
         rt: Runtime[AgentContext] = runtime
         model = rt.context.model
+
+        if not started["flag"]:
+            started["flag"] = True
+            bind(sub_name=sub_name, strategy="programmatic")
+            log.info("sub_agent.start")
+
+        # Runtime prompt lookup from ConfigCenter
+        system_prompt = default_prompt
+        ctx = rt.context
+        if ctx.config_center:
+            prompt_cfg = ctx.config_center.prompts.get(
+                ctx.agent_id, "system", sub_name=sub_name
+            )
+            system_prompt = prompt_cfg.get("system", default_prompt)
 
         messages = []
         if system_prompt:
@@ -38,7 +54,15 @@ def build_programmatic_subagent(
             messages.append(HumanMessage(content=state["query"]))
         messages.extend(state.get("messages", []))
 
+        log.info("llm.call", messages_count=len(messages))
+        log.debug("llm.input", messages=[serialize(m) for m in messages])
+
         response = await model.ainvoke(messages)
+
+        tool_calls = getattr(response, "tool_calls", [])
+        log.info("llm.response", tool_calls=len(tool_calls))
+        log.debug("llm.output", response=serialize(response))
+
         return {"messages": [response]}
 
     def should_continue(state: SubAgentState) -> str:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from artipivot.observability import log
 from artipivot.transforms.registry import TransformRegistry
 
 
@@ -33,6 +34,10 @@ def make_transform_node(
 
     async def transform_node(state: dict[str, Any], runtime) -> dict[str, Any]:
         input_data = state.get(input_key, {})
+
+        log.info("transform.call", transform=transform_name, input_key=input_key, output_key=output_key)
+        log.debug("transform.input", transform=transform_name, data=str(input_data)[:1000])
+
         try:
             result = await registry.invoke(transform_name, input_data)
         except KeyError as e:
@@ -43,6 +48,10 @@ def make_transform_node(
             raise RuntimeError(
                 f"Transform node '{transform_name}' failed: {e}"
             ) from e
+
+        log.info("transform.result", transform=transform_name, status="ok")
+        log.debug("transform.output", transform=transform_name, result=str(result)[:1000])
+
         return {output_key: result}
 
     transform_node.__name__ = f"transform:{transform_name}"

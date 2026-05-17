@@ -37,6 +37,10 @@ class AgentDef:
     graph_sub_agents: dict[str, GraphDef] = field(default_factory=dict)
     # {"research_and_code": GraphDef(...)}
 
+    # Sub-agent references (new style — just names)
+    sub_agent_refs: list[str] = field(default_factory=list)
+    # ["code_writer", "research_and_code"]
+
     # Tools — global whitelist for this agent
     tools: list[str] = field(default_factory=list)
 
@@ -78,6 +82,12 @@ class AgentDef:
         routing = data.get("routing", {})
         mem_data = data.get("memory", {})
 
+        # Backward compat: populate sub_agent_refs from old-style dict keys
+        all_sub_names = (
+            set(sub_agents) | set(decl_sub_agents) | set(graph_sub_agents)
+        )
+        sub_agent_refs = list(all_sub_names)
+
         return cls(
             agent_id=data["agent_id"],
             model=data.get("model", {}),
@@ -86,6 +96,7 @@ class AgentDef:
             sub_agents=sub_agents,
             declarative_sub_agents=decl_sub_agents,
             graph_sub_agents=graph_sub_agents,
+            sub_agent_refs=sub_agent_refs,
             tools=data.get("tools", []),
             prompts=data.get("prompts", {}),
             memory_config=MemoryConfig.from_dict(mem_data) if mem_data else MemoryConfig(),
@@ -110,6 +121,7 @@ class AgentDef:
                 n: {"name": g.name, "nodes": len(g.nodes), "edges": len(g.edges)}
                 for n, g in self.graph_sub_agents.items()
             },
+            "sub_agent_refs": self.sub_agent_refs,
             "tools": self.tools,
             "prompts": self.prompts,
         }

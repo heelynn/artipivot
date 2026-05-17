@@ -286,7 +286,7 @@ class TestHotRebuild:
         notifier = InProcessNotifier()
         provider = ModelProvider(store, notifier)
         config_center = ConfigCenter(store, notifier)
-        gateway = AgentGateway(model_provider=provider)
+        gateway = AgentGateway(model_provider=provider, config_center=config_center)
         factory = GraphFactory(config_center)
         tools = ToolRegistry({"web_search": web_search})
         pm = PluginManager(store, notifier)

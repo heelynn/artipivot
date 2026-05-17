@@ -114,7 +114,7 @@ class TestAgentRegistry:
         notifier = InProcessNotifier()
         provider = ModelProvider(store, notifier)
         config_center = ConfigCenter(store, notifier)
-        gateway = AgentGateway(model_provider=provider)
+        gateway = AgentGateway(model_provider=provider, config_center=config_center)
         factory = GraphFactory(config_center)
         tools = ToolRegistry()
         tools.register(web_search)
@@ -309,7 +309,7 @@ class TestMultiAgentIsolation:
         notifier = InProcessNotifier()
         provider = ModelProvider(store, notifier)
         config_center = ConfigCenter(store, notifier)
-        gateway = AgentGateway(model_provider=provider)
+        gateway = AgentGateway(model_provider=provider, config_center=config_center)
         factory = GraphFactory(config_center)
         tools = ToolRegistry({"web_search": web_search, "code_exec": code_exec})
 

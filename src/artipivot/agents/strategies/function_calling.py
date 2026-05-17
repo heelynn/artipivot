@@ -12,6 +12,7 @@ from artipivot.agents.strategies import register_strategy
 from artipivot.agents.strategies.base import Strategy
 from artipivot.graph.context import AgentContext
 from artipivot.graph.state import SubAgentState
+from artipivot.observability import log, bind, serialize
 
 
 class FunctionCallingStrategy(Strategy):
@@ -24,13 +25,29 @@ class FunctionCallingStrategy(Strategy):
         *,
         config: dict | None = None,
     ) -> CompiledStateGraph:
-        system_prompt = sub_def.system_prompt
+        default_prompt = sub_def.system_prompt
+        sub_name = sub_def.name
+        started: dict = {"flag": False}
 
         async def llm_call(st: SubAgentState, runtime) -> dict:
             from langgraph.runtime import Runtime
 
             rt: Runtime[AgentContext] = runtime
             model = rt.context.model
+
+            if not started["flag"]:
+                started["flag"] = True
+                bind(sub_name=sub_name, strategy="function_calling")
+                log.info("sub_agent.start")
+
+            # Runtime prompt lookup from ConfigCenter
+            system_prompt = default_prompt
+            ctx = rt.context
+            if ctx.config_center:
+                prompt_cfg = ctx.config_center.prompts.get(
+                    ctx.agent_id, "system", sub_name=sub_name
+                )
+                system_prompt = prompt_cfg.get("system", default_prompt)
 
             messages = []
             if system_prompt:
@@ -39,7 +56,18 @@ class FunctionCallingStrategy(Strategy):
                 messages.append(HumanMessage(content=st["query"]))
             messages.extend(st.get("messages", []))
 
+            log.info("llm.call", messages_count=len(messages))
+            log.debug("llm.input", messages=[serialize(m) for m in messages])
+
             response = await model.ainvoke(messages)
+
+            tool_calls = getattr(response, "tool_calls", [])
+            tool_call_names = [tc.get("name", "") for tc in tool_calls] if tool_calls else []
+            log.info("llm.response", has_tool_calls=bool(tool_calls), tool_calls=tool_call_names)
+            log.debug("llm.output", response=serialize(response))
+
+            log.info("sub_agent.end")
+
             return {"messages": [response]}
 
         def should_use_tool(st: SubAgentState) -> str:

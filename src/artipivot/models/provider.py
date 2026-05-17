@@ -55,6 +55,7 @@ class ModelProvider:
 
         self._agent_models: dict[str, ModelConfig] = {}
         self._sub_models: dict[str, ModelConfig] = {}  # "agent_id:sub_name"
+        self._user_models: dict[str, ModelConfig] = {}  # "agent_id:user_id"
         self._global_fallback: ModelConfig | None = None
 
         self._factories: dict[str, Callable[[ModelConfig], BaseChatModel]] = {
@@ -95,44 +96,98 @@ class ModelProvider:
                 if model:
                     key = f"{doc['agent_id']}:{doc['sub_agent']}"
                     self._sub_models[key] = ModelConfig(**model)
+            case "user":
+                model = doc.get("model")
+                if model:
+                    key = f"{doc['agent_id']}:{doc['user_id']}"
+                    self._user_models[key] = ModelConfig(**model)
 
     # ── Management API ──
 
     async def update_agent_model(self, agent_id: str, model: dict) -> None:
-        await self._store.put(
-            "model_configs",
-            f"agent:{agent_id}",
-            {"scope": "agent", "agent_id": agent_id, "model": model},
-        )
+        doc = {"scope": "agent", "agent_id": agent_id, "model": model}
+        await self._store.put("model_configs", f"agent:{agent_id}", doc)
+        with self._lock:
+            self._apply_doc(doc)
 
     async def update_sub_model(
         self, agent_id: str, sub_name: str, model: dict
     ) -> None:
+        doc = {
+            "scope": "sub_agent",
+            "agent_id": agent_id,
+            "sub_agent": sub_name,
+            "model": model,
+        }
         await self._store.put(
-            "model_configs",
-            f"sub_agent:{agent_id}:{sub_name}",
-            {
-                "scope": "sub_agent",
-                "agent_id": agent_id,
-                "sub_agent": sub_name,
-                "model": model,
-            },
+            "model_configs", f"sub_agent:{agent_id}:{sub_name}", doc
         )
+        with self._lock:
+            self._apply_doc(doc)
+
+    async def update_user_model(
+        self, user_id: str, model: dict, agent_id: str | None = None
+    ) -> None:
+        """Set user-level model config. agent_id=None means user global."""
+        effective_agent = agent_id or "__global__"
+        doc = {
+            "scope": "user",
+            "agent_id": effective_agent,
+            "user_id": user_id,
+            "model": model,
+        }
+        await self._store.put(
+            "model_configs", f"user:{effective_agent}:{user_id}", doc
+        )
+        with self._lock:
+            self._apply_doc(doc)
+
+    async def delete_user_model(
+        self, user_id: str, agent_id: str | None = None
+    ) -> None:
+        """Remove user-level model config."""
+        effective_agent = agent_id or "__global__"
+        key = f"user:{effective_agent}:{user_id}"
+        with self._lock:
+            self._user_models.pop(f"{effective_agent}:{user_id}", None)
+        await self._store.delete("model_configs", key)
+
+    def get_user_model_config(
+        self, user_id: str, agent_id: str | None = None
+    ) -> ModelConfig | None:
+        """Read current user-level model config (for API queries)."""
+        effective_agent = agent_id or "__global__"
+        return self._user_models.get(f"{effective_agent}:{user_id}")
 
     # ── Runtime resolution ──
 
     def get_model(
-        self, agent_id: str, sub_name: str | None = None
+        self, agent_id: str, sub_name: str | None = None, user_id: str | None = None
     ) -> BaseChatModel:
-        """Resolve model instance with fallback chain."""
+        """Resolve model instance with fallback chain.
+
+        Resolution order: user:agent → user:global → agent → global_fallback.
+        """
         with self._lock:
             if (
+                user_id
+                and f"{agent_id}:{user_id}" in self._user_models
+            ):
+                cfg = self._user_models[f"{agent_id}:{user_id}"]
+            elif (
+                user_id
+                and f"__global__:{user_id}" in self._user_models
+            ):
+                cfg = self._user_models[f"__global__:{user_id}"]
+            elif (
                 sub_name
                 and f"{agent_id}:{sub_name}" in self._sub_models
             ):
                 cfg = self._sub_models[f"{agent_id}:{sub_name}"]
             elif agent_id in self._agent_models:
                 cfg = self._agent_models[agent_id]
+            elif self._global_fallback is not None:
+                cfg = self._global_fallback
             else:
                 raise ValueError(f"No model config for agent={agent_id}")
 
