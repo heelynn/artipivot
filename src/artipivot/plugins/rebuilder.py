@@ -12,7 +12,6 @@ from artipivot.graph.dsl import GraphDef, build_dsl_graph, parse_graph_def
 from artipivot.graph.factory import GraphFactory
 from artipivot.plugins.manager import PluginDocument, PluginManager
 from artipivot.tools.registry import ToolRegistry
-from artipivot.transforms.registry import TransformRegistry
 
 
 class GraphRebuilder:
@@ -24,14 +23,11 @@ class GraphRebuilder:
         graph_factory: GraphFactory,
         tool_registry: ToolRegistry,
         plugin_manager: PluginManager,
-        *,
-        transform_registry: TransformRegistry | None = None,
     ) -> None:
         self._gateway = gateway
         self._factory = graph_factory
         self._tools = tool_registry
         self._plugins = plugin_manager
-        self._transforms = transform_registry or TransformRegistry()
 
     async def rebuild_agent(
         self,
@@ -88,7 +84,6 @@ class GraphRebuilder:
                 result[p.name] = build_dsl_graph(
                     graph_def,
                     tool_registry=self._tools,
-                    transform_registry=self._transforms,
                     compiled_sub_agents=result,
                 )
             elif strategy:

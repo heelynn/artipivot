@@ -9,7 +9,6 @@ from artipivot.gateway.gateway import AgentGateway
 from artipivot.graph.factory import GraphFactory
 from artipivot.observability import log
 from artipivot.tools.registry import ToolRegistry
-from artipivot.transforms.registry import TransformRegistry
 
 
 class AgentRegistry:
@@ -21,14 +20,12 @@ class AgentRegistry:
         graph_factory: GraphFactory,
         tool_registry: ToolRegistry,
         *,
-        transform_registry: TransformRegistry | None = None,
         model_provider=None,
         sub_agent_registry=None,
     ) -> None:
         self._gateway = gateway
         self._factory = graph_factory
         self._tools = tool_registry
-        self._transforms = transform_registry or TransformRegistry()
         self._model_provider = model_provider
         self._sub_agent_registry = sub_agent_registry
         self._defs: dict[str, AgentDef] = {}
@@ -132,7 +129,6 @@ class AgentRegistry:
             result[name] = build_dsl_graph(
                 graph_def,
                 tool_registry=self._tools,
-                transform_registry=self._transforms,
                 compiled_sub_agents=result,
                 checkpointer=checkpointer,
                 model_provider=self._model_provider,

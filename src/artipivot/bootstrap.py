@@ -37,7 +37,7 @@ from artipivot.observability.logging import configure_logging
 from artipivot.plugins.manager import PluginManager
 from artipivot.storage.memory import InMemoryDocumentStore, InProcessNotifier
 from artipivot.tools.registry import ToolRegistry
-from artipivot.transforms.registry import TransformRegistry
+
 
 _log = structlog.get_logger("artipivot")
 
@@ -119,13 +119,10 @@ async def bootstrap(
         manifest.tools, include_builtins=register_builtin_tools,
     )
 
-    # ── 8. TransformRegistry ────────────────────────────────────
-    transform_registry = TransformRegistry()
-
-    # ── 9. SubAgentRegistry — build sub-agents from manifest ─────
+    # ── 8. TransformRegistry — register builtins ───────────────
+        # ── 8. SubAgentRegistry — build sub-agents from manifest ─────
     sub_agent_registry = SubAgentRegistry(
         tool_registry,
-        transform_registry=transform_registry,
         model_provider=model_provider,
     )
 
@@ -133,7 +130,7 @@ async def bootstrap(
 
     _log.info("bootstrap.sub_agents_built", count=len(sub_agent_registry.list_sub_agents()))
 
-    # ── 10. Gateway + GraphFactory + AgentRegistry ───────────────
+    # ── 9. Gateway + GraphFactory + AgentRegistry ───────────────
     checkpointer = create_checkpointer(backend=checkpointer_backend)
     lg_store = create_store(backend=store_backend)
 
@@ -144,7 +141,6 @@ async def bootstrap(
         gateway=gateway,
         graph_factory=graph_factory,
         tool_registry=tool_registry,
-        transform_registry=transform_registry,
         model_provider=model_provider,
         sub_agent_registry=sub_agent_registry,
     )
@@ -176,7 +172,6 @@ async def bootstrap(
         plugin_manager=plugin_manager,
         rate_limiter=rate_limiter,
         tool_registry=tool_registry,
-        transform_registry=transform_registry,
         agent_registry=agent_registry,
         sub_agent_registry=sub_agent_registry,
     )

@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from artipivot.api.deps import get_config_center, get_plugin_manager, get_rate_limiter, get_transform_registry, get_agent_registry, get_gateway, get_sub_agent_registry
+from artipivot.api.deps import get_config_center, get_plugin_manager, get_rate_limiter, get_agent_registry, get_gateway, get_sub_agent_registry
 from artipivot.config.ratelimit import RateLimiter
 from artipivot.plugins.manager import PluginDocument, PluginManager
 
@@ -28,12 +28,6 @@ class RateLimitDTO(BaseModel):
     agent_id: str | None = None
     tool_name: str | None = None
     overrides: dict = {}
-
-
-class TransformRegisterDTO(BaseModel):
-    name: str
-    module: str
-    function: str
 
 
 class UserModelDTO(BaseModel):
@@ -196,35 +190,6 @@ async def update_tool_ratelimit(tool_name: str, dto: RateLimitDTO):
     rl = get_rate_limiter()
     rl.config.tool_overrides[tool_name] = dto.overrides
     return {"status": "updated", "tool_name": tool_name}
-
-
-# ── Transform management ──
-
-
-@admin_router.get("/transforms")
-async def list_transforms():
-    tr = get_transform_registry()
-    return tr.list_transforms()
-
-
-@admin_router.post("/transforms/register")
-async def register_transform(dto: TransformRegisterDTO):
-    tr = get_transform_registry()
-    try:
-        tr.register_module(dto.name, dto.module, dto.function, source="api")
-    except (ImportError, AttributeError) as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    return {"status": "registered", "name": dto.name}
-
-
-@admin_router.delete("/transforms/{name}")
-async def unregister_transform(name: str):
-    tr = get_transform_registry()
-    try:
-        tr.unregister(name)
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    return {"status": "unregistered", "name": name}
 
 
 # ── Graph visualization ──

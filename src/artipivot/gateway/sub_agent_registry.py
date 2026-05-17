@@ -27,11 +27,9 @@ class SubAgentRegistry:
         self,
         tool_registry,
         *,
-        transform_registry=None,
         model_provider=None,
     ) -> None:
         self._tools = tool_registry
-        self._transforms = transform_registry
         self._model_provider = model_provider
         self._compiled: dict[str, CompiledStateGraph] = {}
         self._defs: dict[str, object] = {}
@@ -120,7 +118,6 @@ class SubAgentRegistry:
             return build_dsl_graph(
                 defn,
                 tool_registry=self._tools,
-                transform_registry=self._transforms,
                 checkpointer=checkpointer,
                 model_provider=self._model_provider,
             )

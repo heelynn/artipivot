@@ -6,8 +6,6 @@ from artipivot.config.prompts import PromptStore
 from artipivot.config.ratelimit import RateLimiter
 from artipivot.config.routing import RoutingConfig
 from artipivot.storage.base import ChangeNotifier, DocumentStore
-from artipivot.transforms.registry import TransformRegistry
-from artipivot.transforms.watcher import TransformWatcher
 
 
 class ConfigCenter:
@@ -18,7 +16,6 @@ class ConfigCenter:
         store: DocumentStore,
         notifier: ChangeNotifier,
         *,
-        transform_registry: TransformRegistry | None = None,
         on_routing_change=None,
     ) -> None:
         self._store = store
@@ -27,10 +24,6 @@ class ConfigCenter:
         self.prompts = PromptStore()
         self.routing = RoutingConfig()
         self.rate_limits = RateLimiter()
-
-        # Transform system
-        self.transforms = transform_registry or TransformRegistry()
-        self._transform_watcher = TransformWatcher(notifier, self.transforms)
 
     def load_from_manifest(self, manifest) -> None:
         """Populate routing + prompts directly from an AgentManifest (no DocumentStore).
@@ -67,9 +60,6 @@ class ConfigCenter:
         await self._notifier.subscribe("prompt_configs", self.prompts.apply)
         await self._notifier.subscribe("routing_configs", self._routing_change_handler)
         await self._notifier.subscribe("ratelimit_configs", self.rate_limits.apply)
-        await self._notifier.subscribe(
-            "transform_configs", self._transform_watcher.apply
-        )
         await self._notifier.start()
 
     async def _routing_change_handler(
@@ -90,11 +80,3 @@ class ConfigCenter:
             for doc in docs:
                 key = doc.get("_id", "")
                 await component.apply(collection, key, "load", doc)
-
-        # Load transform configs -- trigger re-import via watcher handler
-        transform_docs = await self._store.query("transform_configs", {})
-        for doc in transform_docs:
-            key = doc.get("name", doc.get("_id", ""))
-            await self._transform_watcher.apply(
-                "transform_configs", key, "load", doc
-            )

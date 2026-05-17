@@ -57,19 +57,6 @@ async def load_seed_if_empty(
                     await store.put("prompt_configs", prompt_id, cfg)
                 loaded = True
 
-    # transforms.yaml → transform_configs
-    transforms_file = seed_path / "transforms.yaml"
-    if transforms_file.exists():
-        docs = await store.query("transform_configs", {})
-        if not docs:
-            data = yaml.safe_load(transforms_file.read_text())
-            if data and data.get("transforms"):
-                for name, cfg in data.get("transforms", {}).items():
-                    cfg_copy = dict(cfg)
-                    cfg_copy["name"] = name
-                    await store.put("transform_configs", name, cfg_copy)
-                loaded = True
-
     # agents.yaml → model_configs + routing_configs + prompt_configs + agent_configs
     agents_file = seed_path / "agents.yaml"
     if agents_file.exists():

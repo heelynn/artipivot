@@ -63,7 +63,6 @@ def _node_label(node_type: str, name: str) -> str:
         "llm": "LLM",
         "tool": "Tool",
         "tools": "Tools",
-        "transform": "Transform",
         "sub_agent": "SubAgent",
     }
     prefix = type_icons.get(node_type, "")
@@ -76,8 +75,6 @@ def _node_shape(node_type: str) -> tuple[str, str]:
         return ("([", "])")  # stadium
     if node_type in ("tool", "tools"):
         return ("[[", "]]")  # subroutine
-    if node_type == "transform":
-        return ("{{", "}}")  # hexagon
     return ("[", "]")  # rectangle
 
 
@@ -87,6 +84,4 @@ def _condition_label(cond) -> str:
         return f"field:{cond.field}"
     if cond.builtin:
         return f"fn:{cond.builtin}"
-    if cond.transform:
-        return f"transform:{cond.transform}"
     return "cond"

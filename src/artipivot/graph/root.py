@@ -16,7 +16,7 @@ async def clarify_node(state: ArtiPivotState, runtime) -> dict:
         "messages": [
             {
                 "role": "assistant",
-                "content": "I'm not sure I understood. Could you please clarify your request?",
+                "content": "抱歉，我不太确定您的意思，请再描述一下您的需求？",
             }
         ]
     }
@@ -28,7 +28,7 @@ async def fallback_node(state: ArtiPivotState, runtime) -> dict:
         "messages": [
             {
                 "role": "assistant",
-                "content": "I'm not sure how to help with that. Could you try rephrasing?",
+                "content": "抱歉，我暂时无法处理这个请求，请尝试换一种描述方式？",
             }
         ]
     }

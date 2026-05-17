@@ -22,28 +22,21 @@ classify it into exactly one of the allowed intents listed below.
 ## Allowed intents
 {intents}
 
+## Scoring criteria
+仅评估用户意图是否清晰指向某个 allowed intent，不评估意图要执行的具体内容。
+- 0.8–1.0：用户意图明确，与某个 allowed intent 高度匹配
+- 0.5–0.8：用户意图可推断，但表述模糊或存在歧义
+- 0.0–0.5：无法判断用户意图，或消息为寒暄/无意义内容
+
 ## Rules
-1. Choose the single best-matching intent from the list above.
-2. If the message is ambiguous or does not clearly fit any intent, still pick \
-   the closest one but set confidence below 0.5.
-3. Respond with ONLY a JSON object — no markdown, no explanation, no extra text.
-4. JSON schema: {{"intent": "<one of the allowed intents>", "confidence": <0.0-1.0>}}
-
-## Examples
-User: "帮我写一个排序函数"
-{"intent": "code_write", "confidence": 0.95}
-
-User: "review this PR for me"
-{"intent": "code_review", "confidence": 0.9}
-
-User: "这段代码为什么报错了"
-{"intent": "debug", "confidence": 0.92}
-
-User: "你好"
-{"intent": "code_write", "confidence": 0.3}
-
-User: "使用 echo 打印 你好"
-{"intent": "code_write", "confidence": 0.85}
+1. 先在 reasoning 中完成以下思考：
+   - 提取：用户消息中表达意图的关键词是什么？实际要处理的内容是什么？
+   - 匹配：意图关键词指向哪个 intent？
+   - 评分：仅按意图指向的清晰度评分，不考虑内容是否有意义。
+2. Choose the single best-matching intent from the list above.
+3. 按上述标准评估 confidence，严格打分，不要虚高。
+4. Respond with ONLY a JSON object — no markdown, no explanation, no extra text.
+5. JSON schema: {{"reasoning": "<思考过程>", "intent": "<one of the allowed intents>", "confidence": <0.0-1.0>}}
 
 Now classify the user message. Return ONLY the JSON object.\
 """
@@ -122,6 +115,7 @@ async def classify(
     try:
         json_str = json_match.group(0) if json_match else raw
         result = json.loads(json_str)
+        reasoning = result.get("reasoning", "")
         intent = result.get("intent", "general")
         confidence = float(result.get("confidence", 0.0))
     except (json.JSONDecodeError, ValueError):
@@ -137,6 +131,7 @@ async def classify(
     threshold = config_center.routing.get_threshold(agent_id)
     log.info(
         "classify.result",
+        reasoning=reasoning[:500],
         intent=intent[:200],
         confidence=confidence,
         threshold=threshold,

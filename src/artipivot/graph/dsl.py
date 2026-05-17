@@ -2,14 +2,12 @@
 
 Allows defining custom sub-agent graph topologies in YAML instead of
 being limited to the three built-in strategies (ReAct/CoT/Function Calling).
-Node types cover LLM calls, tool execution, data transforms, and nested
-sub-agents.  Conditional routing supports field mapping, built-in functions,
-and Transform-based routers.
+Node types cover LLM calls, tool execution, and nested sub-agents.
+Conditional routing supports field mapping and built-in functions.
 """
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -20,11 +18,10 @@ from langgraph.prebuilt import ToolNode
 
 from artipivot.graph.state import SubAgentState
 from artipivot.observability import log
-from artipivot.transforms.nodes import make_transform_node
 
 # ── Valid node types ──
 
-VALID_NODE_TYPES = frozenset({"llm", "tool", "tools", "transform", "sub_agent"})
+VALID_NODE_TYPES = frozenset({"llm", "tool", "tools", "sub_agent"})
 _VALID_INTERRUPTS = frozenset({"before", "after"})
 
 # User-facing names in YAML → LangGraph internal constants
@@ -38,15 +35,11 @@ class NodeDef:
     """Single node definition in a DSL graph."""
 
     name: str
-    type: str  # "llm" | "tool" | "tools" | "transform" | "sub_agent"
+    type: str  # "llm" | "tool" | "tools" | "sub_agent"
     # type="tool"
     tool: str | None = None
-    # type="tools"
+    # type="tools" or type="llm" (tool binding)
     tools: list[str] | None = None
-    # type="transform"
-    handler: str | None = None
-    input_key: str = "metadata"
-    output_key: str = "metadata"
     # type="llm"
     system_prompt: str = ""
     # type="sub_agent"
@@ -68,29 +61,23 @@ class ConditionDef:
     mapping: dict[str, str] | None = None
     # 2. Built-in — predefined routing functions
     builtin: str | None = None
-    # 3. Transform — call transform function with state, return node name
-    transform: str | None = None
 
     def make_router(
         self,
         *,
         targets: list[str],
-        transform_registry=None,
     ) -> Callable:
         """Build a router function for add_conditional_edges.
 
         Args:
             targets: Resolved target names (LangGraph constants or node names).
-            transform_registry: Required for transform-based routing.
         """
         if self.field is not None and self.mapping is not None:
             return self._field_mapping_router(targets)
         if self.builtin is not None:
             return self._builtin_router(self.builtin, targets)
-        if self.transform is not None:
-            return self._transform_router(self.transform, targets, transform_registry)
         raise ValueError(
-            "ConditionDef must have one of: field+mapping, builtin, transform"
+            "ConditionDef must have one of: field+mapping, builtin"
         )
 
     def _field_mapping_router(self, targets: list[str]) -> Callable:
@@ -145,32 +132,6 @@ class ConditionDef:
             return no_tool_calls
 
         raise ValueError(f"Unknown builtin router: {name}")
-
-    def _transform_router(
-        self,
-        transform_name: str,
-        targets: list[str],
-        transform_registry,
-    ) -> Callable:
-        if transform_registry is None:
-            raise ValueError(
-                f"Transform router '{transform_name}' requires a transform_registry"
-            )
-
-        def transform_router(state: dict) -> str:
-            fn = transform_registry.get(transform_name)
-            result = fn(state)
-            if asyncio.iscoroutine(result):
-                raise RuntimeError(
-                    f"Transform router '{transform_name}' returned a coroutine — "
-                    "routing transforms must be synchronous"
-                )
-            resolved = _RESOLVE.get(result, result)
-            return resolved
-
-        transform_router.__name__ = f"route:transform:{transform_name}"
-        return transform_router
-
 
 @dataclass
 class EdgeDef:
@@ -232,9 +193,6 @@ def parse_graph_def(name: str, graph_cfg: dict) -> GraphDef:
             type=node_type,
             tool=node_cfg.get("tool"),
             tools=node_cfg.get("tools"),
-            handler=node_cfg.get("handler"),
-            input_key=node_cfg.get("input_key", "metadata"),
-            output_key=node_cfg.get("output_key", "metadata"),
             system_prompt=node_cfg.get("system_prompt", ""),
             ref=node_cfg.get("ref"),
             interrupt=interrupt,
@@ -324,7 +282,6 @@ def _parse_condition(cond_cfg: dict, graph_name: str, edge_idx: int) -> Conditio
     has_field = "field" in cond_cfg
     has_mapping = "mapping" in cond_cfg
     has_builtin = "builtin" in cond_cfg
-    has_transform = "transform" in cond_cfg
 
     if has_field or has_mapping:
         if not has_field or not has_mapping:
@@ -337,12 +294,9 @@ def _parse_condition(cond_cfg: dict, graph_name: str, edge_idx: int) -> Conditio
     if has_builtin:
         return ConditionDef(builtin=cond_cfg["builtin"])
 
-    if has_transform:
-        return ConditionDef(transform=cond_cfg["transform"])
-
     raise ValueError(
         f"Graph '{graph_name}', edge[{edge_idx}]: "
-        "condition must have one of: field+mapping, builtin, transform"
+        "condition must have one of: field+mapping, builtin"
     )
 
 
@@ -353,10 +307,9 @@ def validate_graph_def(
     graph_def: GraphDef,
     *,
     tool_registry=None,
-    transform_registry=None,
     compiled_sub_agents: dict[str, CompiledStateGraph] | None = None,
 ) -> list[str]:
-    """Runtime validation — check tools/transforms/sub-agents exist.
+    """Runtime validation — check tools/sub-agents exist.
 
     Returns a list of warning strings.  Empty list means all OK.
     Does not raise — warnings are informational.
@@ -378,26 +331,11 @@ def validate_graph_def(
                         f"Node '{node_name}': tool '{t}' not found in registry"
                     )
 
-        if node_def.type == "transform" and transform_registry:
-            if not transform_registry.has(node_def.handler):
-                warnings.append(
-                    f"Node '{node_name}': transform '{node_def.handler}' not registered"
-                )
-
         if node_def.type == "sub_agent":
             if node_def.ref not in compiled_sub_agents:
                 warnings.append(
                     f"Node '{node_name}': sub_agent '{node_def.ref}' not found"
                 )
-
-        # Check condition transform references
-        for edge in graph_def.edges:
-            if edge.condition and edge.condition.transform and transform_registry:
-                if not transform_registry.has(edge.condition.transform):
-                    warnings.append(
-                        f"Edge from '{edge.source}': "
-                        f"transform router '{edge.condition.transform}' not registered"
-                    )
 
     return warnings
 
@@ -409,7 +347,6 @@ def build_dsl_graph(
     graph_def: GraphDef,
     *,
     tool_registry,
-    transform_registry,
     compiled_sub_agents: dict[str, CompiledStateGraph] | None = None,
     checkpointer=None,
     model_provider=None,
@@ -425,7 +362,7 @@ def build_dsl_graph(
     # Add nodes
     for node_name, node_def in graph_def.nodes.items():
         node_fn = _build_node(
-            node_def, tool_registry, transform_registry,
+            node_def, tool_registry,
             compiled_sub_agents, model_provider,
         )
         builder.add_node(node_name, node_fn)
@@ -434,9 +371,7 @@ def build_dsl_graph(
     for edge in graph_def.edges:
         if edge.condition:
             # Conditional edge
-            router = edge.condition.make_router(
-                targets=edge.targets, transform_registry=transform_registry
-            )
+            router = edge.condition.make_router(targets=edge.targets)
             builder.add_conditional_edges(edge.source, router, edge.targets)
         elif edge.targets:
             # Fan-out: multiple fixed targets from same source
@@ -475,24 +410,16 @@ def build_dsl_graph(
 def _build_node(
     node_def: NodeDef,
     tool_registry,
-    transform_registry,
     compiled_sub_agents: dict[str, CompiledStateGraph],
     model_provider=None,
 ) -> Any:
     """Create a LangGraph node function from a NodeDef."""
     if node_def.type == "llm":
-        node_fn = _make_llm_node(node_def, model_provider)
+        node_fn = _make_llm_node(node_def, tool_registry, model_provider)
     elif node_def.type == "tool":
         node_fn = _make_tool_node(node_def, tool_registry)
     elif node_def.type == "tools":
         node_fn = _make_tools_node(node_def, tool_registry)
-    elif node_def.type == "transform":
-        node_fn = make_transform_node(
-            node_def.handler,
-            transform_registry,
-            input_key=node_def.input_key,
-            output_key=node_def.output_key,
-        )
     elif node_def.type == "sub_agent":
         # sub_agent returns a compiled graph, not a function — no retry wrapping
         return _make_sub_agent_node(node_def, compiled_sub_agents)
@@ -505,11 +432,17 @@ def _build_node(
     return node_fn
 
 
-def _make_llm_node(node_def: NodeDef, model_provider=None) -> Callable:
-    """Create an LLM call node."""
+def _make_llm_node(node_def: NodeDef, tool_registry=None, model_provider=None) -> Callable:
+    """Create an LLM call node.
+
+    If ``tools`` is configured, the model will have those tools bound,
+    enabling it to produce ``tool_calls`` in its response.
+    """
     system_prompt = node_def.system_prompt
     model_cfg = node_def.model
+    tool_names = node_def.tools or []
     _model_provider = model_provider
+    _tool_registry = tool_registry
 
     async def llm_node(state: SubAgentState, runtime) -> dict:
         from artipivot.graph.context import AgentContext
@@ -529,6 +462,13 @@ def _make_llm_node(node_def: NodeDef, model_provider=None) -> Callable:
             rt: Runtime[AgentContext] = runtime
             model = rt.context.model
 
+        # Bind tools if configured
+        if tool_names and _tool_registry is not None:
+            resolved = [_tool_registry.get(name) for name in tool_names]
+            resolved = [t for t in resolved if t is not None]
+            if resolved:
+                model = model.bind_tools(resolved)
+
         messages = []
         if system_prompt:
             messages.append(SystemMessage(content=system_prompt))
@@ -536,7 +476,8 @@ def _make_llm_node(node_def: NodeDef, model_provider=None) -> Callable:
             messages.append(HumanMessage(content=state["query"]))
         messages.extend(state.get("messages", []))
 
-        log.info("llm.call", node=node_def.name, messages_count=len(messages))
+        log.info("llm.call", node=node_def.name, messages_count=len(messages),
+                 tools=len(tool_names))
 
         response = await model.ainvoke(messages)
 

@@ -36,7 +36,6 @@ from artipivot.tools.builtin.code_exec import code_exec
 from artipivot.tools.builtin.file_io import file_io
 from artipivot.tools.builtin.web_search import web_search
 from artipivot.tools.registry import ToolRegistry
-from artipivot.transforms.registry import TransformRegistry
 
 # Built-in tool name → tool instance
 _BUILTIN_TOOLS = {
@@ -104,8 +103,6 @@ def quickstart(
     config_center = ConfigCenter(doc_store, notifier)
     _run_async(config_center.start())
 
-    transform_registry = TransformRegistry()
-
     # 5. Build AgentDef
     sub_agent_name = "assistant"
     intent_map = intents or {"_default": sub_agent_name}
@@ -124,7 +121,7 @@ def quickstart(
     )
 
     # 6. SubAgentRegistry + AgentRegistry
-    sub_agent_reg = SubAgentRegistry(tool_registry, transform_registry=transform_registry)
+    sub_agent_reg = SubAgentRegistry(tool_registry)
     sub_def = _make_decl_def(sub_agent_name, strategy, tool_names, system_prompt)
     sub_agent_reg.build_and_register(sub_agent_name, sub_def)
 
@@ -135,7 +132,6 @@ def quickstart(
         gateway=gateway,
         graph_factory=graph_factory,
         tool_registry=tool_registry,
-        transform_registry=transform_registry,
         sub_agent_registry=sub_agent_reg,
     )
 
@@ -153,7 +149,6 @@ def quickstart(
         plugin_manager=plugin_manager,
         rate_limiter=rate_limiter,
         tool_registry=tool_registry,
-        transform_registry=transform_registry,
         agent_registry=registry,
         sub_agent_registry=sub_agent_reg,
     )
