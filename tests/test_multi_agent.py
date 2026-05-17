@@ -51,7 +51,7 @@ class TestAgentDef:
             },
             "sub_agents": {
                 "researcher": {
-                    "strategy": "cot",
+                    "strategy": "react",
                     "tools": ["web_search"],
                     "system_prompt": "You are a research assistant.",
                     "strategy_config": {"max_plan_steps": 3},
@@ -66,7 +66,7 @@ class TestAgentDef:
         assert ad.confidence_threshold == 0.6
         assert ad.intent_map["search"] == "researcher"
         assert "researcher" in ad.declarative_sub_agents
-        assert ad.declarative_sub_agents["researcher"].strategy == "cot"
+        assert ad.declarative_sub_agents["researcher"].strategy == "react"
         assert ad.memory_config.embedding.enabled is False
 
     def test_to_dict(self):
@@ -266,7 +266,7 @@ agents:
         search: searcher
     sub_agents:
       searcher:
-        strategy: cot
+        strategy: react
         tools: [web_search]
 
   agent_b:

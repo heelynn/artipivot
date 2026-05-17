@@ -22,12 +22,10 @@ class TestStrategyRegistry:
     def test_available_strategies(self):
         # Import all strategies to trigger registration
         import artipivot.agents.strategies.react  # noqa: F401
-        import artipivot.agents.strategies.cot  # noqa: F401
         import artipivot.agents.strategies.function_calling  # noqa: F401
 
         names = available_strategies()
         assert "react" in names
-        assert "cot" in names
         assert "function_calling" in names
 
     def test_get_strategy(self):
@@ -73,40 +71,6 @@ class TestReActStrategy:
         strategy = get_strategy("react")
         sub_def = SubAgentDef(name="test", tools=["web_search"])
         graph = strategy.build(sub_def, _tool_node(), config={"max_iterations": 3})
-        assert graph is not None
-
-
-class TestCoTStrategy:
-    def test_build_graph(self):
-        import artipivot.agents.strategies.cot  # noqa: F401
-
-        strategy = get_strategy("cot")
-        sub_def = SubAgentDef(
-            name="test_agent",
-            tools=["web_search"],
-            system_prompt="test",
-        )
-        graph = strategy.build(sub_def, _tool_node())
-        assert graph is not None
-
-    def test_graph_nodes(self):
-        import artipivot.agents.strategies.cot  # noqa: F401
-
-        strategy = get_strategy("cot")
-        sub_def = SubAgentDef(name="test", tools=["web_search"])
-        graph = strategy.build(sub_def, _tool_node())
-
-        node_names = set(graph.get_graph().nodes.keys())
-        assert "plan" in node_names
-        assert "execute" in node_names
-        assert "synthesize" in node_names
-
-    def test_config_max_plan_steps(self):
-        import artipivot.agents.strategies.cot  # noqa: F401
-
-        strategy = get_strategy("cot")
-        sub_def = SubAgentDef(name="test", tools=["web_search"])
-        graph = strategy.build(sub_def, _tool_node(), config={"max_plan_steps": 3})
         assert graph is not None
 
 

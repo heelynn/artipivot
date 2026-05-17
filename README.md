@@ -20,7 +20,7 @@ ArtiPivot 将 Agent 拆分为三层，各司其职：
 用户消息
   → classify（LLM 识别意图：写代码？审查？调试？）
   → route（查映射表，分派给对应子代理）
-  → sub-agent（ReAct/CoT 循环，调工具，生成结果）
+  → sub-agent（ReAct 循环，调工具，生成结果）
   → respond（格式化输出返回用户）
 ```
 
@@ -127,7 +127,7 @@ agents:
 │  第二层 · 子代理（可插拔，支持热加载）                     │
 │                                                           │
 │  ┌─ 图拓扑 ─────────────────────────────────────────┐    │
-│  │  策略模板 ReAct/CoT/FC │ Graph DSL YAML 自定义图  │    │
+│  │  策略模板 ReAct/FC │ Graph DSL YAML 自定义图  │    │
 │  │  ├ 循环保护 max_iterations                        │    │
 │  │  ├ Human-in-the-loop interrupt                    │    │
 │  │  ├ 节点级 retry RetryPolicy                       │    │
@@ -381,7 +381,7 @@ artipivot/
 │   ├── api/                    # FastAPI（REST + Admin API）
 │   ├── gateway/                # 多主 Agent 分发与注册
 │   ├── graph/                  # LangGraph 图定义、路由、DSL、可视化
-│   ├── agents/                 # 子代理 + 策略引擎（ReAct/CoT/FC）
+│   ├── agents/                 # 子代理 + 策略引擎（ReAct/FC）
 │   ├── tools/                  # 工具注册表 + MCP 适配器
 │   ├── memory/                 # 三层记忆 + 上下文压缩
 │   ├── models/                 # 模型适配 + 三级 Fallback
@@ -452,7 +452,7 @@ uv run pytest tests/ -v
 | 存储层 | [storage.md](doc/modules/storage.md) | DocumentStore / ChangeNotifier / ArtifactStore 接口与后端 |
 | 模型层 | [models.md](doc/modules/models.md) | ModelConfig、三级 Fallback、供应商工厂、动态切换 |
 | 工具层 | [tools.md](doc/modules/tools.md) | ToolRegistry、@tool 装饰器、MCP 适配器 |
-| 子代理 | [agents.md](doc/modules/agents.md) | 编程式/声明式定义、策略引擎（ReAct/CoT/FC） |
+| 子代理 | [agents.md](doc/modules/agents.md) | 编程式/声明式定义、策略引擎（ReAct/FC） |
 | 配置中心 | [config.md](doc/modules/config.md) | ConfigCenter、PromptStore、RoutingConfig、RateLimiter |
 | 记忆系统 | [memory.md](doc/modules/memory.md) | 三层记忆模型、可插拔后端、Namespace 隔离 |
 | 多主 Agent | [multi_agent.md](doc/modules/multi_agent.md) | AgentDef、AgentRegistry、YAML 声明、五维隔离 |

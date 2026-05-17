@@ -305,7 +305,7 @@ flowchart TD
     end
 
     subgraph Declarative["声明式：JSON/YAML 配置"]
-        D1["📋 策略选择<br/>react / cot / function_calling"]
+        D1["📋 策略选择<br/>react / function_calling"]
         D2["🔧 工具绑定<br/>引用已注册的工具"]
         D3["💬 提示词模板<br/>system + few-shot"]
         D4["⚙️ 参数配置<br/>模型、温度、最大轮次"]
@@ -554,23 +554,20 @@ artipivot plugin publish ./code_assistant-1.0.0.artipivot-plugin.zip
 
 **核心思路**：框架内置三种 Agent 策略引擎，声明式子代理只需选择策略、配置参数。
 
-下图展示了三种策略引擎的工作方式：
+下图展示了两种策略引擎的工作方式：
 
 - **ReAct**（思考-行动-观察循环）：Agent 先"想"要做什么，然后"做"（调用工具），再"观察"结果，循环直到完成任务
-- **CoT**（链式推理）：Agent 按步骤推理，逐步分解问题
 - **Function Calling**（函数调用）：模型直接决定调用哪个工具及参数
 
 ```mermaid
 flowchart TD
     subgraph Strategies["内置策略引擎"]
         S1["ReAct 策略<br/>思考 → 行动 → 观察 → 循环"]
-        S2["CoT 策略<br/>链式推理，逐步分解"]
         S3["Function Calling 策略<br/>模型直接调用工具"]
     end
 
     Config["声明式配置<br/>（JSON/YAML）"] --> Select["选择策略"]
     Select --> S1
-    Select --> S2
     Select --> S3
 
     Config --> Bind["绑定工具"]
@@ -683,7 +680,7 @@ flowchart LR
 |--------|------|------|
 | `identity` | 名称、标签、描述、图标 | 同编程式 |
 | `intents` | 绑定的意图列表 | `["customer_service"]` |
-| `strategy.type` | 策略引擎：`react` / `cot` / `function_calling` | `"react"` |
+| `strategy.type` | 策略引擎：`react` / `function_calling` | `"react"` |
 | `strategy.max_iterations` | 最大思考-行动循环次数 | `5` |
 | `model` | 模型配置（provider / name / temperature） | `gpt-4o` |
 | `tools` | 绑定的工具列表（按名称引用） | `["order_query"]` |
@@ -1969,7 +1966,7 @@ artipivot/
 
 实现声明式子代理和持久化记忆系统。
 
-- [ ] 策略引擎（ReAct / CoT / Function Calling）
+- [ ] 策略引擎（ReAct / Function Calling）
 - [ ] YAML 声明式子代理加载
 - [ ] PostgresSaver + PostgresStore 持久化
 - [ ] 上下文窗口管理（摘要压缩）

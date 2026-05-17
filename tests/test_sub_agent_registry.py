@@ -167,9 +167,9 @@ class TestSubAgentDeduplication:
         reg = SubAgentRegistry(tools)
 
         defn1 = DeclarativeSubAgentDef(name="react_agent", strategy="react", tools=["web_search"])
-        defn2 = DeclarativeSubAgentDef(name="cot_agent", strategy="cot", tools=["web_search"])
+        defn2 = DeclarativeSubAgentDef(name="fc_agent", strategy="function_calling", tools=["web_search"])
 
         graph1 = reg.build_and_register("react_agent", defn1)
-        graph2 = reg.build_and_register("cot_agent", defn2)
+        graph2 = reg.build_and_register("fc_agent", defn2)
 
         assert graph1 is not graph2

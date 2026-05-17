@@ -34,7 +34,7 @@ class TestDeclarativeSubAgentDef:
     def test_defaults(self):
         defn = DeclarativeSubAgentDef(
             name="test",
-            strategy="cot",
+            strategy="react",
             tools=["web_search"],
         )
         assert defn.system_prompt == ""
@@ -52,19 +52,6 @@ class TestBuildDeclarativeSubagent:
         graph = build_declarative_subagent(defn, _tool_node())
         assert graph is not None
         assert "llm_call" in set(graph.get_graph().nodes.keys())
-
-    def test_cot(self):
-        defn = DeclarativeSubAgentDef(
-            name="test",
-            strategy="cot",
-            tools=["web_search"],
-        )
-        graph = build_declarative_subagent(defn, _tool_node())
-        assert graph is not None
-        node_names = set(graph.get_graph().nodes.keys())
-        assert "plan" in node_names
-        assert "execute" in node_names
-        assert "synthesize" in node_names
 
     def test_function_calling(self):
         defn = DeclarativeSubAgentDef(
@@ -124,16 +111,16 @@ sub_agents:
     tools:
       - web_search
   reviewer:
-    strategy: cot
+    strategy: react
     tools:
       - web_search
     strategy_config:
-      max_plan_steps: 3
+      max_iterations: 5
 """
         (tmp_path / "sub_agents.yaml").write_text(yaml_content)
         result = load_sub_agent_defs(tmp_path)
 
         assert len(result) == 2
         assert result["writer"].strategy == "react"
-        assert result["reviewer"].strategy == "cot"
-        assert result["reviewer"].strategy_config["max_plan_steps"] == 3
+        assert result["reviewer"].strategy == "react"
+        assert result["reviewer"].strategy_config["max_iterations"] == 5

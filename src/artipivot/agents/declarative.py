@@ -16,7 +16,7 @@ class DeclarativeSubAgentDef:
     """Declarative sub-agent definition — choose strategy via config."""
 
     name: str
-    strategy: str  # "react" | "cot" | "function_calling"
+    strategy: str  # "react" | "function_calling"
     tools: list[str]
     system_prompt: str = ""
     strategy_config: dict = field(default_factory=dict)
@@ -29,7 +29,6 @@ def build_declarative_subagent(
     """Build sub-agent graph from declarative definition."""
     # Ensure strategy modules are imported so they self-register
     import artipivot.agents.strategies.react  # noqa: F401
-    import artipivot.agents.strategies.cot  # noqa: F401
     import artipivot.agents.strategies.function_calling  # noqa: F401
 
     strategy = get_strategy(defn.strategy)

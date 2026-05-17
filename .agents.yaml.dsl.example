@@ -7,7 +7,7 @@ global:
   fallback_model:
     provider: deepseek
     name: deepseek-v4-flash
-    api_key: sk-9725d1debd5545b29e9c42c7c0f57a76
+    api_key: xxx
 
 tools:
   echo: builtin
@@ -19,7 +19,7 @@ agents:
     model:
       provider: deepseek
       name: deepseek-v4-flash
-      api_key: sk-9725d1debd5545b29e9c42c7c0f57a76
+      api_key: xxx
       temperature: 0.0
       timeout: 120
     routing:

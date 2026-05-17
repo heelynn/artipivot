@@ -174,7 +174,7 @@ sub_registry.build_and_register("coder", DeclarativeSubAgentDef(
 ))
 sub_registry.build_and_register("researcher", DeclarativeSubAgentDef(
     name="researcher",
-    strategy="cot",
+    strategy="react",
     tools=["web_search"],
     system_prompt="You are a research assistant.",
 ))
@@ -244,7 +244,7 @@ registry.register_def(agent_def)
        │
        ▼
 ┌─────────────┐
-│  sub-agent  │  子代理执行（ReAct / CoT / FC）
+│  sub-agent  │  子代理执行（ReAct / FC）
 └──────┬──────┘
        │
        ▼
@@ -388,23 +388,6 @@ DeclarativeSubAgentDef(
     tools=["web_search", "code_exec"],
     system_prompt="You are a coding assistant.",
     strategy_config={"max_iterations": 5},
-)
-```
-
-#### CoT（Plan → Execute → Synthesize）
-
-```
-START → plan → execute → synthesize → END
-```
-
-适合可分解的结构化任务。plan 阶段 LLM 生成 JSON 计划，execute 按步执行，synthesize 汇总。
-
-```python
-DeclarativeSubAgentDef(
-    name="researcher",
-    strategy="cot",
-    tools=["web_search"],
-    strategy_config={"max_plan_steps": 3},
 )
 ```
 
@@ -1223,7 +1206,7 @@ for p in plugins:
         graph_def = parse_graph_def(p.name, p.manifest["graph"])
         result[p.name] = build_dsl_graph(graph_def, ...)
     elif p.manifest.get("strategy"):
-        # 方式 2：声明式策略（react / cot / function_calling）
+        # 方式 2：声明式策略（react / function_calling）
         defn = DeclarativeSubAgentDef(name=p.name, strategy=..., tools=..., ...)
         result[p.name] = build_declarative_subagent(defn, tool_node)
     else:
@@ -1339,7 +1322,7 @@ bind_trace_id(trace_id, agent_id="code_agent", user_id="alice", thread_id="code_
 **子代理级上下文**（策略内绑定，该子代理执行期间自动携带）：
 
 ```python
-# react.py / cot.py / function_calling.py / programmatic.py 内部
+# react.py / function_calling.py / programmatic.py 内部
 bind(sub_name="coder", strategy="react")   # 自动携带 sub_name + strategy
 bind(iteration=2)                           # 循环场景追加迭代号
 ```
@@ -1358,7 +1341,7 @@ bind(iteration=2)                           # 循环场景追加迭代号
   │     ├── tools:    log.info("tool.result")  ← 携带 [+ iteration]
   │     └── ...
   │
-  ├── 下一个 sub-agent: bind(sub_name="researcher", strategy="cot")
+  ├── 下一个 sub-agent: bind(sub_name="researcher", strategy="react")
   │     └── ...  ← 携带新的 sub_name + strategy（trace_id 不变）
   │
   └── clear_trace()  ← 请求结束，清除所有上下文
@@ -1488,11 +1471,11 @@ agents:
         write: writer
     sub_agents:
       researcher:
-        strategy: cot
+        strategy: react
         tools: [web_search]
         system_prompt: "You are a research assistant. Plan, search, and synthesize."
         strategy_config:
-          max_plan_steps: 3
+          max_iterations: 5
       writer:
         strategy: react
         tools: [web_search, file_io]

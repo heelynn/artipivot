@@ -76,7 +76,7 @@
 | 主 Agent | `CompiledStateGraph`（独立实例） | 完整隔离的 Agent 运行时 |
 | 路由 Agent | 主图内 `add_conditional_edges` | 意图分类 + 条件路由 |
 | 子代理（编程式） | `StateGraph` 子图，`add_node(subgraph)` | 独立 State + Nodes + Edges |
-| 子代理（声明式） | 策略引擎动态构建的 `StateGraph` | ReAct / CoT / Function Calling |
+| 子代理（声明式） | 策略引擎动态构建的 `StateGraph` | ReAct / Function Calling |
 | 工具 | `@tool` 函数 + `ToolNode` | 原子执行能力 |
 | 会话记忆 | `MessagesState` + `Checkpointer` | 多轮对话（详见 [MEMORY.md](./MEMORY.md)） |
 | 长期记忆 | `Store` (跨 thread) | 用户偏好、知识（详见 [MEMORY.md](./MEMORY.md)） |

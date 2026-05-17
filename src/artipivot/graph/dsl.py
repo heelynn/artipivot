@@ -1,7 +1,7 @@
 """Graph DSL — YAML-driven arbitrary graph topology for sub-agents.
 
 Allows defining custom sub-agent graph topologies in YAML instead of
-being limited to the three built-in strategies (ReAct/CoT/Function Calling).
+being limited to the two built-in strategies (ReAct/Function Calling).
 Node types cover LLM calls, tool execution, and nested sub-agents.
 Conditional routing supports field mapping and built-in functions.
 """

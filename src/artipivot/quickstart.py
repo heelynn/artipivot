@@ -59,7 +59,7 @@ def quickstart(
     """Create a single-agent FastAPI service with minimal config.
 
     Args:
-        strategy: Sub-agent strategy — "react", "cot", or "function_calling".
+        strategy: Sub-agent strategy — "react" or "function_calling".
         tools: List of built-in tool names to register (e.g. ["web_search", "code_exec"]).
         system_prompt: System prompt for the sub-agent.
         agent_id: Agent identifier (default "default").

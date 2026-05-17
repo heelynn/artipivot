@@ -7,7 +7,6 @@ flowchart TD
     subgraph Strategies["策略引擎"]
         Registry["策略注册表<br/>register_strategy()"]
         Registry --> ReAct["ReAct 策略<br/>think → tools → think 循环"]
-        Registry --> CoT["CoT 策略<br/>plan → execute → synthesize 线性"]
         Registry --> FC["Function Calling<br/>llm → tools → END 单次"]
     end
 
@@ -49,7 +48,7 @@ from artipivot.agents.declarative import DeclarativeSubAgentDef, build_declarati
 
 defn = DeclarativeSubAgentDef(
     name="code_writer",
-    strategy="react",              # react | cot | function_calling
+    strategy="react",              # react | function_calling
     tools=["web_search", "code_exec"],
     system_prompt="You are a coding assistant.",
     strategy_config={"max_iterations": 5},
@@ -57,12 +56,11 @@ defn = DeclarativeSubAgentDef(
 sub_graph = build_declarative_subagent(defn, tool_node)
 ```
 
-## 三种策略对比
+## 两种策略对比
 
 | 策略 | 拓扑 | 适用场景 | strategy_config |
 |------|------|----------|-----------------|
 | `react` | think → tools → think（循环） | 复杂多步推理 | `max_iterations`（默认 10） |
-| `cot` | plan → execute → synthesize（线性） | 可分解结构化任务 | `max_plan_steps`（默认 5） |
 | `function_calling` | llm → tools → END（单次） | 简单查询/转换 | 无 |
 
 ## 自定义策略

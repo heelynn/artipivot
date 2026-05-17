@@ -2,7 +2,7 @@
 
 ## 概述
 
-子代理默认提供三种固定策略（ReAct / CoT / Function Calling），覆盖常见场景。但某些流程需要自定义拓扑，例如"搜索 + 代码执行并行 → 合并结果 → 回复"。Graph DSL 让用户在 YAML 中定义任意图结构，无需编写 Python 代码。
+子代理默认提供两种固定策略（ReAct / Function Calling），覆盖常见场景。但某些流程需要自定义拓扑，例如"搜索 + 代码执行并行 → 合并结果 → 回复"。Graph DSL 让用户在 YAML 中定义任意图结构，无需编写 Python 代码。
 
 **设计原则：** 有 `graph:` 键走 DSL，有 `strategy:` 键走现有策略，向后兼容。
 

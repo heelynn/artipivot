@@ -52,7 +52,7 @@ class TestQuickstart:
         assert isinstance(app, FastAPI)
 
     def test_custom_strategy(self):
-        app = quickstart(strategy="cot", tools=[])
+        app = quickstart(strategy="react", tools=[])
         assert isinstance(app, FastAPI)
 
     def test_with_system_prompt(self):

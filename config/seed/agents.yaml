@@ -10,7 +10,6 @@
 #
 # ─── 子代理策略 ────────────────────────────────────────
 #   react:             ReAct 循环（think → tools → think），适合复杂多步任务
-#   cot:               线性链（plan → execute → synthesize），适合可分解的结构化任务
 #   function_calling:  单次调用（LLM → tools → 结束），适合简单查询
 #   graph:             DSL 自定义拓扑，LLM / Tool / Transform / HITL 任意组合
 
@@ -68,11 +67,11 @@ agents:
         summarize: researcher
     sub_agents:
       researcher:
-        strategy: cot
+        strategy: react
         tools: [web_search]
         system_prompt: "You are a research assistant."
         strategy_config:
-          max_plan_steps: 3
+          max_iterations: 5
     prompts:
       classify: "Classify the user message into one of: search, summarize."
       respond: "Summarize the research findings for the user."

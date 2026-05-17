@@ -20,12 +20,6 @@ TEMPLATES = {
         "system_prompt": "You are a helpful assistant.",
         "strategy_config": {"max_iterations": 5},
     },
-    "cot": {
-        "strategy": "cot",
-        "tools": ["web_search"],
-        "system_prompt": "You are a research assistant.",
-        "strategy_config": {"max_plan_steps": 3},
-    },
     "function_calling": {
         "strategy": "function_calling",
         "tools": ["web_search"],
@@ -37,7 +31,7 @@ TEMPLATES = {
 @plugin_app.command("init")
 def plugin_init(
     name: str = typer.Argument(..., help="Plugin name"),
-    template: str = typer.Option("react", help="Strategy template: react | cot | function_calling"),
+    template: str = typer.Option("react", help="Strategy template: react | function_calling"),
 ):
     """Generate a plugin directory with manifest."""
     plugin_dir = Path("plugins") / name
