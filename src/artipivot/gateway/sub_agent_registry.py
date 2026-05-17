@@ -62,6 +62,20 @@ class SubAgentRegistry:
         """List all registered sub-agent names."""
         return list(self._compiled)
 
+    def register_from_manifest(self, agents: dict) -> None:
+        """Discover and build all sub-agents declared in the manifest.
+
+        Args:
+            agents: dict of agent_id → AgentDef (from manifest).
+        """
+        for agent_def in agents.values():
+            for name, decl_def in agent_def.declarative_sub_agents.items():
+                self.build_and_register(name, decl_def)
+            for name, sub_def in agent_def.sub_agents.items():
+                self.build_and_register(name, sub_def)
+            for name, graph_def in agent_def.graph_sub_agents.items():
+                self.build_and_register(name, graph_def)
+
     def build_and_register(
         self,
         name: str,

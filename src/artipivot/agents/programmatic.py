@@ -11,7 +11,7 @@ from langgraph.graph.state import CompiledStateGraph
 from artipivot.agents.base import SubAgentDef
 from artipivot.graph.context import AgentContext
 from artipivot.graph.state import SubAgentState
-from artipivot.observability import log, bind, serialize
+from artipivot.observability import log, bind
 
 
 def build_programmatic_subagent(
@@ -26,12 +26,13 @@ def build_programmatic_subagent(
     default_prompt = sub_def.system_prompt
     sub_name = sub_def.name
     started: dict = {"flag": False}
+    tools = list(tool_node.tools_by_name.values())
 
     async def llm_call(state: SubAgentState, runtime) -> dict:
         from langgraph.runtime import Runtime
 
         rt: Runtime[AgentContext] = runtime
-        model = rt.context.model
+        model = rt.context.bound_model(tools)
 
         if not started["flag"]:
             started["flag"] = True
@@ -55,13 +56,11 @@ def build_programmatic_subagent(
         messages.extend(state.get("messages", []))
 
         log.info("llm.call", messages_count=len(messages))
-        log.debug("llm.input", messages=[serialize(m) for m in messages])
 
         response = await model.ainvoke(messages)
 
         tool_calls = getattr(response, "tool_calls", [])
         log.info("llm.response", tool_calls=len(tool_calls))
-        log.debug("llm.output", response=serialize(response))
 
         return {"messages": [response]}
 

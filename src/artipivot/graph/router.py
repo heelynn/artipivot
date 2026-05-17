@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -13,10 +14,38 @@ from artipivot.observability import log
 from artipivot.observability import otel
 
 
-# Default classify prompt
-_DEFAULT_CLASSIFY_PROMPT = """You are an intent classifier. Classify the user message into one of the defined intents.
-Return ONLY a JSON object with "intent" (string) and "confidence" (float 0.0-1.0).
-If unsure, set confidence below 0.7.
+# Default classify prompt — robust few-shot prompt that works across domains
+_DEFAULT_CLASSIFY_PROMPT = """\
+You are an intent classifier. Your ONLY job is to read the user message and \
+classify it into exactly one of the allowed intents listed below.
+
+## Allowed intents
+{intents}
+
+## Rules
+1. Choose the single best-matching intent from the list above.
+2. If the message is ambiguous or does not clearly fit any intent, still pick \
+   the closest one but set confidence below 0.5.
+3. Respond with ONLY a JSON object — no markdown, no explanation, no extra text.
+4. JSON schema: {{"intent": "<one of the allowed intents>", "confidence": <0.0-1.0>}}
+
+## Examples
+User: "帮我写一个排序函数"
+{"intent": "code_write", "confidence": 0.95}
+
+User: "review this PR for me"
+{"intent": "code_review", "confidence": 0.9}
+
+User: "这段代码为什么报错了"
+{"intent": "debug", "confidence": 0.92}
+
+User: "你好"
+{"intent": "code_write", "confidence": 0.3}
+
+User: "使用 echo 打印 你好"
+{"intent": "code_write", "confidence": 0.85}
+
+Now classify the user message. Return ONLY the JSON object.\
 """
 
 
@@ -30,33 +59,92 @@ async def classify(
     agent_id = rt.context.agent_id
     model = rt.context.model
 
+    # Resolve system prompt — supports both dict (from PromptStore) and str (from YAML)
+    # Empty string / empty dict → falls back to built-in default
     prompt_cfg = config_center.prompts.get(agent_id, "classify")
-    system_prompt = prompt_cfg.get("system", _DEFAULT_CLASSIFY_PROMPT)
+    if isinstance(prompt_cfg, dict):
+        system_prompt = prompt_cfg.get("system", "") or _DEFAULT_CLASSIFY_PROMPT
+    elif isinstance(prompt_cfg, str) and prompt_cfg:
+        system_prompt = prompt_cfg
+    else:
+        system_prompt = _DEFAULT_CLASSIFY_PROMPT
+
+    # Replace {intents} placeholder with actual intent names + descriptions
+    intent_map = config_center.routing.get_intent_map(agent_id)
+    intent_descriptions = config_center.routing.get_intent_descriptions(agent_id)
+    if intent_map:
+        lines = []
+        for name in intent_map:
+            desc = intent_descriptions.get(name, "")
+            if desc:
+                lines.append(f"- {name}: {desc}")
+            else:
+                lines.append(f"- {name}")
+        intents_str = "\n".join(lines)
+    else:
+        intents_str = "general"
+    system_prompt = system_prompt.replace("{intents}", intents_str)
 
     messages = [
         SystemMessage(content=system_prompt),
         *state["messages"],
     ]
 
-    log.debug("classify.llm_input", messages_count=len(messages))
+    # Extract user message for logging (last HumanMessage)
+    user_msg = ""
+    for m in reversed(state["messages"]):
+        if isinstance(m, HumanMessage):
+            user_msg = str(m.content)
+            break
+
+    log.debug(
+        "classify.llm_input",
+        system_prompt=system_prompt[:200],
+        user_message=user_msg[:200],
+        messages_count=len(messages),
+    )
 
     response = await model.ainvoke(messages)
 
-    log.debug("classify.llm_output", raw_response=response.content)
+    log.debug("classify.llm_output", raw_response=response.content[:500])
 
+    raw = response.content.strip()
+
+    # Strip markdown code fences that some LLMs wrap around JSON
+    raw = re.sub(r"^```(?:json)?\s*\n?", "", raw)
+    raw = re.sub(r"\n?```\s*$", "", raw)
+    raw = raw.strip()
+
+    # Extract first JSON object from response (handles trailing text)
+    json_match = re.search(r"\{[^{}]*\}", raw)
+
+    parsed = True
     try:
-        result = json.loads(response.content)
+        json_str = json_match.group(0) if json_match else raw
+        result = json.loads(json_str)
         intent = result.get("intent", "general")
         confidence = float(result.get("confidence", 0.0))
     except (json.JSONDecodeError, ValueError):
-        intent = "general"
-        confidence = 0.0
+        parsed = False
+        intent = raw if raw else "general"
+        confidence = 0.5
+        log.warning(
+            "classify.parse_failure",
+            raw_response=raw[:300],
+            error="LLM did not return valid JSON",
+        )
 
     threshold = config_center.routing.get_threshold(agent_id)
-    log.info("classify.result", intent=intent, confidence=confidence, threshold=threshold)
+    log.info(
+        "classify.result",
+        intent=intent[:200],
+        confidence=confidence,
+        threshold=threshold,
+        parsed=parsed,
+    )
     otel.record_intent(intent, confidence=confidence)
 
-    return {"intent": intent, "confidence": confidence}
+    return {"intent": intent, "confidence": confidence, "parsed": parsed}
 
 
 def route_by_intent(
@@ -70,11 +158,18 @@ def route_by_intent(
 
     threshold = config_center.routing.get_threshold(agent_id)
     if state["confidence"] < threshold:
-        log.info("route.fallback", intent=state["intent"],
-                 confidence=state["confidence"], reason="below_threshold")
+        # Distinguish parse failure from genuine low confidence
+        reason = "parse_failure" if not state.get("parsed", True) else "below_threshold"
+        log.info(
+            "route.fallback",
+            intent=state["intent"][:200],
+            confidence=state["confidence"],
+            reason=reason,
+            route="clarify",
+        )
         return "clarify"
 
     intent_map = config_center.routing.get_intent_map(agent_id)
     target = intent_map.get(state["intent"], "fallback")
-    log.info("route.decision", intent=state["intent"], target=target)
+    log.info("route.decision", intent=state["intent"][:200], target=target)
     return target

@@ -14,7 +14,7 @@ from artipivot.agents.strategies import register_strategy
 from artipivot.agents.strategies.base import Strategy
 from artipivot.graph.context import AgentContext
 from artipivot.graph.state import SubAgentState
-from artipivot.observability import log, bind, serialize
+from artipivot.observability import log, bind
 
 
 class ReActStrategy(Strategy):
@@ -32,12 +32,13 @@ class ReActStrategy(Strategy):
         default_prompt = sub_def.system_prompt
         sub_name = sub_def.name
         state: dict = {"iterations": 0, "max_iterations": max_iterations, "start_time": None}
+        tools = list(tool_node.tools_by_name.values())
 
         async def llm_call(st: SubAgentState, runtime) -> dict:
             from langgraph.runtime import Runtime
 
             rt: Runtime[AgentContext] = runtime
-            model = rt.context.model
+            model = rt.context.bound_model(tools)
 
             if state["start_time"] is None:
                 state["start_time"] = time.perf_counter()
@@ -62,13 +63,11 @@ class ReActStrategy(Strategy):
 
             bind(iteration=state["iterations"])
             log.info("llm.call", messages_count=len(messages))
-            log.debug("llm.input", messages=[serialize(m) for m in messages])
 
             response = await model.ainvoke(messages)
 
             tool_calls = getattr(response, "tool_calls", [])
             log.info("llm.response", tool_calls=len(tool_calls), has_content=bool(response.content))
-            log.debug("llm.output", response=serialize(response))
 
             state["iterations"] += 1
             return {"messages": [response]}

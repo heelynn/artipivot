@@ -16,6 +16,7 @@ class ArtiPivotState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     intent: str | None
     confidence: float
+    parsed: bool
     active_agent: str | None
     metadata: dict
 

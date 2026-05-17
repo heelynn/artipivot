@@ -1,0 +1,60 @@
+# ArtiPivot Agent Manifest
+#
+# 这是项目的实际 Agent 定义文件，每次启动直接读取。
+# 参考示例：config/seed/agents.yaml
+
+global:
+  fallback_model:
+    provider: deepseek
+    name: deepseek-v4-flash
+    api_key: xxx
+
+tools:
+  echo: builtin
+  current_time: builtin
+  file_io: builtin
+
+agents:
+  code_agent:
+    model:
+      provider: deepseek
+      name: deepseek-v4-flash
+      api_key: xxx
+      temperature: 0.0
+      timeout: 120
+    routing:
+      confidence_threshold: 0.7
+      intents:
+        code:
+          target: code
+          description: "用户要求代码相关，编写代码、生成代码片段或创建新功能"
+        time:
+          target: time
+          description: "用户想要进行时间方面的处理或逻辑"
+    sub_agents:
+      code:
+        strategy: react
+        tools: [echo, current_time, file_io]
+        system_prompt: 你是一个代码助手。严格按照工具返回结果回复用户，推测用户想要使用哪个工具，根据工具返回不要添加多余格式或表情。
+        strategy_config:
+          max_iterations: 5
+      time:
+        strategy: react
+        tools: [echo, current_time, file_io]
+        system_prompt: 你是一个使用时间的工具。严格按照工具返回结果回复用户，推测用户想要使用哪个工具，根据工具返回不要添加多余格式或表情。
+        strategy_config:
+          max_iterations: 5
+    prompts:
+      # classify prompt — 如果不配置则使用内置 default (含 few-shot)
+      # {intents} 会自动替换为 routing.intents 中定义的意图名
+      # 自定义时务必要求返回 JSON 并给出 few-shot 示例:
+      #
+      # classify: |
+      #   你是一个意图分类器。将用户消息分类到以下意图之一: {intents}。
+      #   只返回 JSON，不要返回其他任何内容。
+      #   格式: {"intent": "<意图>", "confidence": <0.0-1.0>}
+      #   示例:
+      #   用户: "帮我写个函数" → {"intent": "code_write", "confidence": 0.95}
+      #   用户: "你好" → {"intent": "code_write", "confidence": 0.3}
+      classify: ""   # 留空则使用内置强大 default prompt
+      respond: "Based on the sub-agent result, compose a helpful response."

@@ -16,6 +16,11 @@ class RoutingConfig:
         cfg = self._configs.get(agent_id, {})
         return {i["name"]: i["sub_agent"] for i in cfg.get("intents", [])}
 
+    def get_intent_descriptions(self, agent_id: str) -> dict[str, str]:
+        """Return intent name → description mapping (empty string if no description)."""
+        cfg = self._configs.get(agent_id, {})
+        return {i["name"]: i.get("description", "") for i in cfg.get("intents", [])}
+
     def get_threshold(self, agent_id: str) -> float:
         return self._configs.get(agent_id, {}).get("confidence_threshold", 0.7)
 

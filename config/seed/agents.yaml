@@ -1,13 +1,44 @@
-# agents.yaml
+# agents.yaml — 单文件完整 Agent 定义，直接可执行
 #
-# Multi-agent declaration — define each agent's model, routing, sub-agents, tools.
-# Loaded on first startup, managed via REST API afterwards.
+# 启动：artipivot serve
+# YAML 在每次启动时直接读取，不走 DocumentStore 中转。
+# 运行时通过 Admin API 的修改存在 DocumentStore 中，重启后仍生效。
+#
+# ─── 工具类型 ──────────────────────────────────────────
+#   builtin: 快捷字符串，自动注册内置工具（web_search, code_exec, file_io）
+#   module:  动态 import Python 函数，module.function 路径
+#
+# ─── 子代理策略 ────────────────────────────────────────
+#   react:             ReAct 循环（think → tools → think），适合复杂多步任务
+#   cot:               线性链（plan → execute → synthesize），适合可分解的结构化任务
+#   function_calling:  单次调用（LLM → tools → 结束），适合简单查询
+#   graph:             DSL 自定义拓扑，LLM / Tool / Transform / HITL 任意组合
 
+# ─── 全局配置 ──────────────────────────────────────────
+global:
+  fallback_model:
+    provider: openai
+    name: gpt-4o-mini
+
+# ─── 工具注册 ──────────────────────────────────────────
+tools:
+  web_search: builtin
+  code_exec: builtin
+  file_io: builtin
+  # 自定义工具（module 模式）:
+  # database_query:
+  #   type: module
+  #   module: my_project.tools
+  #   function: query_database
+
+# ─── Agent 定义 ────────────────────────────────────────
 agents:
   code_agent:
     model:
       provider: anthropic
       name: claude-sonnet-4-6
+      temperature: 0.0
+      timeout: 120
     routing:
       confidence_threshold: 0.7
       intents:
@@ -29,6 +60,7 @@ agents:
     model:
       provider: openai
       name: gpt-4o
+      temperature: 0.0
     routing:
       confidence_threshold: 0.6
       intents:

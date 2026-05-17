@@ -33,6 +33,10 @@ Thumbs.db
 .env.*
 !.env.example
 
+# Agent manifest (may contain API keys in model config)
+.agents.yaml
+.agents.*.yaml
+
 # Testing
 .pytest_cache/
 .coverage

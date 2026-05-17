@@ -15,7 +15,7 @@ from artipivot.agents.strategies import register_strategy
 from artipivot.agents.strategies.base import Strategy
 from artipivot.graph.context import AgentContext
 from artipivot.graph.state import SubAgentState
-from artipivot.observability import log, bind, serialize
+from artipivot.observability import log, bind
 
 
 class CoTStrategy(Strategy):
@@ -33,12 +33,13 @@ class CoTStrategy(Strategy):
         default_prompt = sub_def.system_prompt
         sub_name = sub_def.name
         timing: dict = {"start_time": None}
+        tools = list(tool_node.tools_by_name.values())
 
         async def plan(st: SubAgentState, runtime) -> dict:
             from langgraph.runtime import Runtime
 
             rt: Runtime[AgentContext] = runtime
-            model = rt.context.model
+            model = rt.context.bound_model(tools)
 
             timing["start_time"] = time.perf_counter()
             bind(sub_name=sub_name, strategy="cot")
@@ -73,13 +74,11 @@ class CoTStrategy(Strategy):
                 messages.extend(st.get("messages", []))
 
             log.info("llm.call", phase="plan")
-            log.debug("llm.input", messages=[serialize(m) for m in messages])
 
             response = await model.ainvoke(messages)
             plan_text = response.content if hasattr(response, "content") else str(response)
 
             log.info("llm.response", phase="plan")
-            log.debug("llm.output", response=serialize(response))
 
             # Try to parse the plan; if parsing fails, treat as single-step
             try:
@@ -100,7 +99,7 @@ class CoTStrategy(Strategy):
             from langgraph.runtime import Runtime
 
             rt: Runtime[AgentContext] = runtime
-            model = rt.context.model
+            model = rt.context.bound_model(tools)
 
             # Read plan from artifacts
             raw_plan = st.get("artifacts", [])[-1] if st.get("artifacts") else "[]"
@@ -119,12 +118,11 @@ class CoTStrategy(Strategy):
 
                 bind(step=i + 1)
                 log.info("llm.call", phase="execute", total=len(steps))
-                log.debug("llm.input", messages=[serialize(m) for m in messages])
 
-                response = await model.ainvoke(messages)
+                bound = model.bind_tools(tools) if tools else model
+                response = await bound.ainvoke(messages)
 
                 log.info("llm.response", phase="execute")
-                log.debug("llm.output", response=serialize(response))
 
                 results.append(
                     f"Step {i + 1}: {action}\nResult: {response.content if hasattr(response, 'content') else response}"
@@ -141,7 +139,7 @@ class CoTStrategy(Strategy):
             from langgraph.runtime import Runtime
 
             rt: Runtime[AgentContext] = runtime
-            model = rt.context.model
+            model = rt.context.bound_model(tools)
 
             artifacts = st.get("artifacts", [])
             summary_input = "\n\n".join(artifacts) if artifacts else "No results to summarize."
@@ -152,12 +150,10 @@ class CoTStrategy(Strategy):
             ]
 
             log.info("llm.call", phase="synthesize")
-            log.debug("llm.input", messages=[serialize(m) for m in messages])
 
             response = await model.ainvoke(messages)
 
             log.info("llm.response", phase="synthesize")
-            log.debug("llm.output", response=serialize(response))
 
             # Session end
             if timing["start_time"] is not None:

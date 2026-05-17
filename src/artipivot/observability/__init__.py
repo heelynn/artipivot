@@ -17,6 +17,7 @@ Usage::
 
 import structlog
 
+from artipivot.observability.callback import GraphLoggingCallback
 from artipivot.observability.logging import configure_logging, serialize
 from artipivot.observability.trace import bind_trace_id, clear_trace, generate_trace_id
 
@@ -28,6 +29,7 @@ bind = structlog.contextvars.bind_contextvars
 
 __all__ = [
     "configure_logging",
+    "GraphLoggingCallback",
     "log",
     "bind",
     "serialize",

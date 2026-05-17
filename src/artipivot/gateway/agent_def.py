@@ -24,6 +24,8 @@ class AgentDef:
     confidence_threshold: float = 0.7
     intent_map: dict[str, str] = field(default_factory=dict)
     # {"code_write": "code_writer", "debug": "code_writer"}
+    intent_descriptions: dict[str, str] = field(default_factory=dict)
+    # {"code_write": "用户要求写代码...", "debug": "用户遇到错误..."}
 
     # Sub-agents (programmatic)
     sub_agents: dict[str, SubAgentDef] = field(default_factory=dict)
@@ -55,14 +57,6 @@ class AgentDef:
     def from_dict(cls, data: dict) -> AgentDef:
         """Build AgentDef from a dict (e.g. parsed from YAML)."""
         sub_agents = {}
-        for name, sd in data.get("sub_agents", {}).items():
-            sub_agents[name] = SubAgentDef(
-                name=name,
-                tools=sd.get("tools", []),
-                system_prompt=sd.get("system_prompt", ""),
-                max_iterations=sd.get("strategy_config", {}).get("max_iterations", 10),
-            )
-
         decl_sub_agents = {}
         graph_sub_agents = {}
         for name, sd in data.get("sub_agents", {}).items():
@@ -78,9 +72,28 @@ class AgentDef:
                     system_prompt=sd.get("system_prompt", ""),
                     strategy_config=sd.get("strategy_config", {}),
                 )
+            else:
+                sub_agents[name] = SubAgentDef(
+                    name=name,
+                    tools=sd.get("tools", []),
+                    system_prompt=sd.get("system_prompt", ""),
+                    max_iterations=sd.get("strategy_config", {}).get("max_iterations", 10),
+                )
 
         routing = data.get("routing", {})
         mem_data = data.get("memory", {})
+
+        # Normalize intents: support both simple (str) and rich (dict with target+description)
+        raw_intents = routing.get("intents", {})
+        intent_map = {}
+        intent_descriptions = {}
+        for intent, value in raw_intents.items():
+            if isinstance(value, str):
+                intent_map[intent] = value
+            elif isinstance(value, dict):
+                intent_map[intent] = value.get("target", "")
+                if value.get("description"):
+                    intent_descriptions[intent] = value["description"]
 
         # Backward compat: populate sub_agent_refs from old-style dict keys
         all_sub_names = (
@@ -92,7 +105,8 @@ class AgentDef:
             agent_id=data["agent_id"],
             model=data.get("model", {}),
             confidence_threshold=routing.get("confidence_threshold", 0.7),
-            intent_map=routing.get("intents", {}),
+            intent_map=intent_map,
+            intent_descriptions=intent_descriptions,
             sub_agents=sub_agents,
             declarative_sub_agents=decl_sub_agents,
             graph_sub_agents=graph_sub_agents,

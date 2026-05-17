@@ -45,6 +45,74 @@ def _factory_openai(cfg: ModelConfig) -> BaseChatModel:
     return ChatOpenAI(**kwargs)
 
 
+def _factory_deepseek(cfg: ModelConfig) -> BaseChatModel:
+    kwargs: dict = {
+        "model": cfg.name,
+        "temperature": cfg.temperature,
+        "timeout": cfg.timeout,
+    }
+    if cfg.max_tokens is not None:
+        kwargs["max_tokens"] = cfg.max_tokens
+    if cfg.api_key:
+        kwargs["api_key"] = cfg.api_key
+    if cfg.base_url:
+        kwargs["api_base"] = cfg.base_url
+    return _PatchedChatDeepSeek(**kwargs)
+
+
+def _deepseek_get_request_payload(self, input_, *, stop=None, **kwargs):
+    """Override that injects ``reasoning_content`` back into assistant messages.
+
+    DeepSeek thinking models return ``reasoning_content`` in
+    ``AIMessage.additional_kwargs``.  The upstream ``_convert_message_to_dict``
+    drops it when building the next request, causing a 400 error.
+    """
+    from langchain_core.messages import AIMessage, BaseMessage
+    from langchain_core.prompt_values import (
+        ChatPromptValue,
+        ChatPromptValueConcrete,
+        StringPromptValue,
+    )
+
+    # ── recover original message objects ──
+    raw_messages: list[BaseMessage] = []
+    if isinstance(input_, list):
+        for m in input_:
+            if isinstance(m, BaseMessage):
+                raw_messages.append(m)
+            else:
+                raw_messages.append(BaseMessage(content=str(m)))
+    elif isinstance(input_, (ChatPromptValue, ChatPromptValueConcrete, StringPromptValue)):
+        raw_messages = input_.to_messages()
+
+    payload = self.__class__.__bases__[0]._get_request_payload(self, input_, stop=stop, **kwargs)
+    payload_msgs = payload.get("messages", [])
+
+    for i, pmsg in enumerate(payload_msgs):
+        if pmsg.get("role") != "assistant":
+            continue
+        if i >= len(raw_messages):
+            break
+        rc = raw_messages[i].additional_kwargs.get("reasoning_content")
+        if rc and "reasoning_content" not in pmsg:
+            pmsg["reasoning_content"] = rc
+
+    return payload
+
+
+def _make_patched_deepseek_cls():
+    from langchain_deepseek import ChatDeepSeek
+
+    return type(
+        "_PatchedChatDeepSeek",
+        (ChatDeepSeek,),
+        {"_get_request_payload": _deepseek_get_request_payload},
+    )
+
+
+_PatchedChatDeepSeek = _make_patched_deepseek_cls()
+
+
 class ModelProvider:
     """Model resolution + fallback chain + dynamic hot-reload."""
 
@@ -61,10 +129,44 @@ class ModelProvider:
         self._factories: dict[str, Callable[[ModelConfig], BaseChatModel]] = {
             "anthropic": _factory_anthropic,
             "openai": _factory_openai,
+            "deepseek": _factory_deepseek,
         }
 
+    def load_from_manifest(self, manifest) -> None:
+        """Populate model configs directly from an AgentManifest (no DocumentStore).
+
+        Called at startup. After this, start() still subscribes to
+        DocumentStore changes for runtime Admin API hot-reloads.
+        """
+        from artipivot.gateway.loader import AgentManifest
+
+        with self._lock:
+            if manifest.global_model:
+                self._global_fallback = ModelConfig(**manifest.global_model)
+
+            for agent_def in manifest.agents.values():
+                if agent_def.model:
+                    self._agent_models[agent_def.agent_id] = ModelConfig(
+                        **agent_def.model
+                    )
+
+                    # Sub-agents inherit the main agent's model by default
+                    for sub_name in agent_def.declarative_sub_agents:
+                        key = f"{agent_def.agent_id}:{sub_name}"
+                        if key not in self._sub_models:
+                            self._sub_models[key] = ModelConfig(**agent_def.model)
+                    for sub_name in agent_def.sub_agents:
+                        key = f"{agent_def.agent_id}:{sub_name}"
+                        if key not in self._sub_models:
+                            self._sub_models[key] = ModelConfig(**agent_def.model)
+
     async def start(self) -> None:
-        """Load all configs from DocumentStore + subscribe to changes."""
+        """Load any existing DocumentStore configs + subscribe to runtime changes.
+
+        On first startup with the manifest-based approach, DocumentStore is
+        empty so _load_all() is a no-op. On subsequent restarts with a
+        persistent backend, runtime Admin API changes are reloaded.
+        """
         await self._load_all()
         await self._notifier.subscribe("model_configs", self._on_change)
 

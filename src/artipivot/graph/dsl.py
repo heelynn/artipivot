@@ -19,7 +19,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 
 from artipivot.graph.state import SubAgentState
-from artipivot.observability import log, serialize
+from artipivot.observability import log
 from artipivot.transforms.nodes import make_transform_node
 
 # ── Valid node types ──
@@ -537,13 +537,11 @@ def _make_llm_node(node_def: NodeDef, model_provider=None) -> Callable:
         messages.extend(state.get("messages", []))
 
         log.info("llm.call", node=node_def.name, messages_count=len(messages))
-        log.debug("llm.input", node=node_def.name, messages=[serialize(m) for m in messages])
 
         response = await model.ainvoke(messages)
 
         tool_calls = getattr(response, "tool_calls", [])
         log.info("llm.response", node=node_def.name, tool_calls=len(tool_calls))
-        log.debug("llm.output", node=node_def.name, response=serialize(response))
 
         return {"messages": [response]}
 

@@ -7,6 +7,7 @@ from langgraph.graph.state import CompiledStateGraph
 from artipivot.gateway.agent_def import AgentDef
 from artipivot.gateway.gateway import AgentGateway
 from artipivot.graph.factory import GraphFactory
+from artipivot.observability import log
 from artipivot.tools.registry import ToolRegistry
 from artipivot.transforms.registry import TransformRegistry
 
@@ -51,6 +52,11 @@ class AgentRegistry:
 
         self._gateway.register(agent_def.agent_id, graph)
         self._defs[agent_def.agent_id] = agent_def
+        log.info(
+            "registry.agent_registered",
+            agent_id=agent_def.agent_id,
+            sub_agents=list(sub_agent_nodes.keys()),
+        )
 
     def get_def(self, agent_id: str) -> AgentDef | None:
         """Get AgentDef by agent_id."""
@@ -87,6 +93,7 @@ class AgentRegistry:
                 )
                 result[name] = graph
             else:
+                log.error("registry.sub_agent_not_found", name=name, agent_id=agent_def.agent_id)
                 raise ValueError(
                     f"Sub-agent '{name}' not found in registry and no definition in AgentDef"
                 )

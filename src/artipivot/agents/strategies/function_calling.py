@@ -12,7 +12,7 @@ from artipivot.agents.strategies import register_strategy
 from artipivot.agents.strategies.base import Strategy
 from artipivot.graph.context import AgentContext
 from artipivot.graph.state import SubAgentState
-from artipivot.observability import log, bind, serialize
+from artipivot.observability import log, bind
 
 
 class FunctionCallingStrategy(Strategy):
@@ -28,12 +28,13 @@ class FunctionCallingStrategy(Strategy):
         default_prompt = sub_def.system_prompt
         sub_name = sub_def.name
         started: dict = {"flag": False}
+        tools = list(tool_node.tools_by_name.values())
 
         async def llm_call(st: SubAgentState, runtime) -> dict:
             from langgraph.runtime import Runtime
 
             rt: Runtime[AgentContext] = runtime
-            model = rt.context.model
+            model = rt.context.bound_model(tools)
 
             if not started["flag"]:
                 started["flag"] = True
@@ -57,14 +58,12 @@ class FunctionCallingStrategy(Strategy):
             messages.extend(st.get("messages", []))
 
             log.info("llm.call", messages_count=len(messages))
-            log.debug("llm.input", messages=[serialize(m) for m in messages])
 
             response = await model.ainvoke(messages)
 
             tool_calls = getattr(response, "tool_calls", [])
             tool_call_names = [tc.get("name", "") for tc in tool_calls] if tool_calls else []
             log.info("llm.response", has_tool_calls=bool(tool_calls), tool_calls=tool_call_names)
-            log.debug("llm.output", response=serialize(response))
 
             log.info("sub_agent.end")
 

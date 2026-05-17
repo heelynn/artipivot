@@ -32,8 +32,37 @@ class ConfigCenter:
         self.transforms = transform_registry or TransformRegistry()
         self._transform_watcher = TransformWatcher(notifier, self.transforms)
 
+    def load_from_manifest(self, manifest) -> None:
+        """Populate routing + prompts directly from an AgentManifest (no DocumentStore).
+
+        Called at startup. After this, start() still subscribes to
+        DocumentStore changes for runtime Admin API hot-reloads.
+        """
+        from artipivot.gateway.loader import AgentManifest
+
+        for agent_def in manifest.agents.values():
+            # Routing config
+            if agent_def.intent_map:
+                self.routing._configs[agent_def.agent_id] = {
+                    "agent_id": agent_def.agent_id,
+                    "confidence_threshold": agent_def.confidence_threshold,
+                    "intents": [
+                        {
+                            "name": intent,
+                            "sub_agent": sub_name,
+                            "description": agent_def.intent_descriptions.get(intent, ""),
+                        }
+                        for intent, sub_name in agent_def.intent_map.items()
+                    ],
+                }
+
+            # Prompt configs
+            for node_name, template in agent_def.prompts.items():
+                key = f"{agent_def.agent_id}:{node_name}"
+                self.prompts._prompts[key] = {"_id": key, "system": template}
+
     async def start(self) -> None:
-        """Full load + subscribe to changes."""
+        """Load any existing DocumentStore configs + subscribe to runtime changes."""
         await self._load_all()
         await self._notifier.subscribe("prompt_configs", self.prompts.apply)
         await self._notifier.subscribe("routing_configs", self._routing_change_handler)

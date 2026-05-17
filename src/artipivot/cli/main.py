@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+import uuid
 from pathlib import Path
 
 import typer
@@ -98,21 +100,99 @@ def serve(
     host: str = typer.Option("0.0.0.0", help="Bind host"),
     port: int = typer.Option(8000, help="Bind port"),
     reload: bool = typer.Option(False, help="Enable auto-reload"),
+    manifest: str = typer.Option(
+        None,
+        help="Path to agents YAML. Default: ARTIPIVOT_AGENTS_MANIFEST env var, or .agents.yaml",
+    ),
+    env_file: str = typer.Option(".env", help=".env file path"),
 ):
-    """Start the API server."""
+    """Start the API server with full auto-initialization.
+
+    Loads .env, reads the agent manifest YAML, builds all agents,
+    and starts the server — all in one command.
+    """
+    from artipivot.bootstrap import bootstrap_sync
+
+    import os
+    resolved = manifest or os.environ.get("ARTIPIVOT_AGENTS_MANIFEST", ".agents.yaml")
+
+    typer.echo(f"ArtiPivot starting...")
+    typer.echo(f"  manifest:   {resolved}")
+    typer.echo(f"  env file:   {env_file}")
+    typer.echo(f"  log level:  {os.environ.get('ARTIPIVOT_LOG_LEVEL', 'INFO')}")
+    typer.echo(f"  log format: {os.environ.get('ARTIPIVOT_LOG_FORMAT', 'json')}")
+    typer.echo(f"  server:     http://{host}:{port}")
+
+    app = bootstrap_sync(
+        manifest_path=manifest,
+        env_file=env_file,
+    )
+
     import uvicorn
 
-    uvicorn.run(
-        "artipivot.api.server:create_app",
-        host=host,
-        port=port,
-        factory=True,
-        reload=reload,
+    uvicorn.run(app, host=host, port=port, reload=reload)
+
+
+@app.command("chat")
+def chat(
+    agent_id: str = typer.Argument(..., help="Agent ID to talk to"),
+    user_input: str = typer.Argument(..., help="Message to send"),
+    manifest: str = typer.Option(
+        None,
+        help="Path to agents YAML. Default: ARTIPIVOT_AGENTS_MANIFEST env var, or .agents.yaml",
+    ),
+    env_file: str = typer.Option(".env", help=".env file path"),
+    thread_id: str = typer.Option(None, help="Thread ID (auto-generated if omitted)"),
+):
+    """Chat with an agent — single-shot invocation from the CLI."""
+    from artipivot.api.deps import get_gateway
+    from artipivot.bootstrap import bootstrap_sync
+
+    resolved = manifest or os.environ.get("ARTIPIVOT_AGENTS_MANIFEST", ".agents.yaml")
+    tid = thread_id or uuid.uuid4().hex[:8]
+
+    typer.echo(f"Initializing agent '{agent_id}' from {resolved} ...", err=True)
+
+    bootstrap_sync(manifest_path=manifest, env_file=env_file)
+
+    gateway = get_gateway()
+
+    result = asyncio.run(
+        gateway.invoke(agent_id, user_input, tid)
     )
+
+    messages = result.get("messages", [])
+    if messages:
+        last = messages[-1]
+        typer.echo(getattr(last, "content", str(last)))
+    else:
+        typer.echo("(no response)", err=True)
 
 
 @app.command("agents")
-def list_agents():
-    """List registered agents (requires running server)."""
-    typer.echo("Listing agents requires a running server.")
-    typer.echo("Start with: artipivot serve")
+def list_agents(
+    manifest: str = typer.Option(
+        None,
+        help="Path to agents YAML. Default: ARTIPIVOT_AGENTS_MANIFEST env var, or .agents.yaml",
+    ),
+):
+    """List registered agents from manifest."""
+    from artipivot.gateway.loader import load_agent_manifest
+
+    resolved = manifest or os.environ.get("ARTIPIVOT_AGENTS_MANIFEST", ".agents.yaml")
+    loaded = load_agent_manifest(resolved)
+
+    if not loaded.agents:
+        typer.echo(f"No agents found in {resolved}")
+        raise typer.Exit(1)
+
+    typer.echo(f"Agents ({len(loaded.agents)}) from {resolved}:\n")
+    for agent_id, agent_def in loaded.agents.items():
+        model = agent_def.model
+        model_str = f"{model.get('provider', '?')}/{model.get('name', '?')}"
+        sub_agents = agent_def.sub_agent_refs or []
+        typer.echo(f"  {agent_id}")
+        typer.echo(f"    model:  {model_str}")
+        typer.echo(f"    sub-agents: {', '.join(sub_agents) if sub_agents else '(none)'}")
+        typer.echo(f"    intents:   {len(agent_def.intent_map)}")
+        typer.echo()

@@ -8,6 +8,7 @@ dependencies = [
     "fastapi>=0.136.1",
     "langchain-anthropic>=1.4.3",
     "langchain-core>=1.4.0",
+    "langchain-deepseek>=1.0.1",
     "langchain-openai>=1.2.1",
     "langgraph>=1.2.0",
     "orjson>=3.10.0",

@@ -4,13 +4,26 @@ from __future__ import annotations
 
 import time
 
+import structlog
 from langgraph.graph.state import CompiledStateGraph
 
 from artipivot.graph.context import AgentContext
 from artipivot.models.provider import ModelProvider
 from artipivot.observability import log
 from artipivot.observability import otel
+from artipivot.observability.callback import GraphLoggingCallback
 from artipivot.observability.trace import bind_trace_id, clear_trace, generate_trace_id
+
+
+def _model_name(model) -> str:
+    """Extract model name from a LangChain BaseChatModel instance."""
+    return getattr(model, "model", None) or getattr(model, "model_name", "unknown")
+
+
+def _truncate(text: str, limit: int = 200) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "..."
 
 
 class AgentGateway:
@@ -25,6 +38,7 @@ class AgentGateway:
         self._graphs: dict[str, CompiledStateGraph] = {}
         self._model_provider = model_provider
         self._config_center = config_center
+        self._callback = GraphLoggingCallback()
 
     def register(self, agent_id: str, graph: CompiledStateGraph) -> None:
         """Register a compiled graph for an agent."""
@@ -53,12 +67,16 @@ class AgentGateway:
             thread_id=full_thread_id,
         )
 
-        log.info("gateway.request")
+        log.info("gateway.request", message=_truncate(message))
         t0 = time.perf_counter()
 
         model = self._model_provider.get_model(agent_id, user_id=user_id)
+        structlog.contextvars.bind_contextvars(model_name=_model_name(model))
 
-        config = {"configurable": {"thread_id": full_thread_id}}
+        config = {
+            "configurable": {"thread_id": full_thread_id},
+            "callbacks": [self._callback],
+        }
 
         try:
             result = await graph.ainvoke(
@@ -74,7 +92,29 @@ class AgentGateway:
             )
             elapsed = int((time.perf_counter() - t0) * 1000)
             msg_count = len(result.get("messages", [])) if isinstance(result, dict) else 0
-            log.info("gateway.complete", duration_ms=elapsed, messages_count=msg_count)
+
+            # Extract last assistant message as response summary
+            reply = ""
+            if isinstance(result, dict) and result.get("messages"):
+                for m in reversed(result["messages"]):
+                    if getattr(m, "type", None) == "ai" or getattr(m, "role", None) == "assistant":
+                        reply = getattr(m, "content", "")
+                        break
+
+            # Extract route info from result
+            intent = result.get("intent") if isinstance(result, dict) else None
+            confidence = result.get("confidence") if isinstance(result, dict) else None
+            parsed = result.get("parsed") if isinstance(result, dict) else None
+
+            log.info(
+                "gateway.complete",
+                duration_ms=elapsed,
+                messages_count=msg_count,
+                reply=_truncate(reply),
+                intent=intent,
+                confidence=confidence,
+                parsed=parsed,
+            )
             otel.record_request_duration(elapsed, agent_id=agent_id)
             return result
         except Exception as e:
@@ -95,11 +135,16 @@ class AgentGateway:
 
         bind_trace_id(trace_id, agent_id=agent_id, user_id=user_id, thread_id=full_thread_id)
 
-        log.info("gateway.request", mode="stream")
+        log.info("gateway.request", mode="stream", message=_truncate(message))
         t0 = time.perf_counter()
 
         model = self._model_provider.get_model(agent_id, user_id=user_id)
-        config = {"configurable": {"thread_id": full_thread_id}}
+        structlog.contextvars.bind_contextvars(model_name=_model_name(model))
+
+        config = {
+            "configurable": {"thread_id": full_thread_id},
+            "callbacks": [self._callback],
+        }
 
         try:
             async for chunk in graph.astream(

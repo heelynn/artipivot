@@ -17,6 +17,7 @@ def bind_trace_id(
     agent_id: str | None = None,
     user_id: str | None = None,
     thread_id: str | None = None,
+    model_name: str | None = None,
 ) -> None:
     """Bind request context to structlog contextvars."""
     structlog.contextvars.clear_contextvars()
@@ -26,6 +27,7 @@ def bind_trace_id(
             "agent_id": agent_id,
             "user_id": user_id,
             "thread_id": thread_id,
+            "model_name": model_name,
         }.items() if v is not None},
     )
 
