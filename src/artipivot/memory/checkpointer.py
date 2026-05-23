@@ -1,67 +1,54 @@
-"""Checkpointer factory — pluggable backend registry."""
+"""Checkpointer factory — delegates to unified storage registry.
+
+Legacy functions retained for backward compatibility.
+New code should use StorageProvider directly.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import warnings
 from typing import Any
 
-# Backend factory registry: name → callable(**kwargs) -> BaseCheckpointSaver
-_checkpointer_backends: dict[str, Callable[..., Any]] = {}
+from artipivot.storage.factory import TYPE_CHECKPOINTER, MemoryFactory
+from artipivot.storage.registry import get_persistent, resolve
 
 
-def register_checkpointer_backend(name: str, factory: Callable[..., Any]) -> None:
+def register_checkpointer_backend(name: str, factory: Any) -> None:
     """Register a checkpointer backend factory.
 
-    Args:
-        name: Backend identifier (e.g. "memory", "postgres", "mongodb").
-        factory: Callable that accepts **kwargs and returns a checkpointer instance.
+    .. deprecated:: Use :func:`artipivot.storage.registry.register_persistent` instead.
     """
-    _checkpointer_backends[name] = factory
+    warnings.warn(
+        "register_checkpointer_backend() is deprecated — "
+        "use artipivot.storage.registry.register_persistent()",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
 
-def create_checkpointer(backend: str = "memory", **kwargs):
+def create_checkpointer(backend: str = "memory", **kwargs) -> Any:
     """Create a checkpointer from a registered backend.
 
-    Raises:
-        ValueError: If the backend is not registered.
+    Delegates to the unified storage registry.
     """
-    factory = _checkpointer_backends.get(backend)
-    if factory is None:
-        available = list(_checkpointer_backends)
-        raise ValueError(f"Unknown checkpointer backend: {backend}, available: {available}")
-    return factory(**kwargs)
+    if backend == "memory":
+        return MemoryFactory().create(TYPE_CHECKPOINTER, kwargs)
+    # persistent
+    persistent = get_persistent()
+    if persistent is None:
+        raise ValueError("No persistent backend registered")
+    return persistent.create(TYPE_CHECKPOINTER, kwargs)
 
 
 def available_checkpointer_backends() -> list[str]:
-    """List registered checkpointer backend names."""
-    return list(_checkpointer_backends)
+    """List backend names that support checkpointer."""
+    from artipivot.storage.registry import available_backends
+    return available_backends(TYPE_CHECKPOINTER)
 
 
 async def setup_checkpointer(checkpointer) -> None:
     """Initialize database tables if needed (no-op for InMemory)."""
     if hasattr(checkpointer, "setup"):
-        await checkpointer.setup()
-
-
-# ── Built-in backends ──
-
-
-def _memory_checkpointer(**kwargs):
-    from langgraph.checkpoint.memory import InMemorySaver
-
-    return InMemorySaver()
-
-
-def _postgres_checkpointer(**kwargs):
-    import os
-
-    uri = kwargs.get("uri") or os.environ.get("DATABASE_URI")
-    if not uri:
-        raise ValueError("PostgreSQL URI required: pass uri= or set DATABASE_URI")
-    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-
-    return AsyncPostgresSaver.from_conn_string(uri)
-
-
-register_checkpointer_backend("memory", _memory_checkpointer)
-register_checkpointer_backend("postgres", _postgres_checkpointer)
+        result = checkpointer.setup()
+        if hasattr(result, "__await__"):
+            await result

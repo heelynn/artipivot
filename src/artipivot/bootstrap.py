@@ -30,12 +30,11 @@ from artipivot.gateway.loader import AgentManifest, load_agent_manifest
 from artipivot.gateway.registry import AgentRegistry
 from artipivot.gateway.sub_agent_registry import SubAgentRegistry
 from artipivot.graph.factory import GraphFactory
-from artipivot.memory.checkpointer import create_checkpointer
-from artipivot.memory.store import create_store
+from artipivot.memory.config import MemoryConfig
 from artipivot.models.provider import ModelProvider
 from artipivot.observability.logging import configure_logging
 from artipivot.plugins.manager import PluginManager
-from artipivot.storage.memory import InMemoryDocumentStore, InProcessNotifier
+from artipivot.storage.provider import StorageConfig, StorageProvider
 from artipivot.tools.registry import ToolRegistry
 
 
@@ -49,9 +48,6 @@ async def bootstrap(
     log_dir: str | None = None,
     log_level: str | None = None,
     log_format: str | None = None,
-    checkpointer_backend: str = "memory",
-    store_backend: str = "memory",
-    storage_backend: str = "memory",
     register_builtin_tools: bool = True,
 ) -> "FastAPI":
     """Full initialization — load .env, parse YAML, create components, build agents.
@@ -66,9 +62,6 @@ async def bootstrap(
         log_dir: Directory for log files. Default: ARTIPIVOT_LOG_DIR env or "logs".
         log_level: Log level override. Default: ARTIPIVOT_LOG_LEVEL env or "INFO".
         log_format: Log format — "json" or "text". Default: ARTIPIVOT_LOG_FORMAT env or "json".
-        checkpointer_backend: Checkpointer backend (memory / postgres).
-        store_backend: LangGraph Store backend (memory / postgres).
-        storage_backend: DocumentStore backend (currently only memory).
         register_builtin_tools: Whether to pre-register built-in tool stubs.
 
     Returns:
@@ -87,13 +80,9 @@ async def bootstrap(
         )
 
     # ── 2. Logging ──────────────────────────────────────────────
-    configure_logging(log_dir=log_dir, level=log_level, log_format=log_format)  # output & tz read from env
+    configure_logging(log_dir=log_dir, level=log_level, log_format=log_format)
 
-    # ── 3. Storage (for Admin API runtime changes) ──────────────
-    store = InMemoryDocumentStore()
-    notifier = InProcessNotifier()
-
-    # ── 4. Load manifest from YAML directly ─────────────────────
+    # ── 3. Load manifest from YAML directly ─────────────────────
     manifest = load_agent_manifest(manifest_path)
     if manifest.agents:
         _log.info(
@@ -101,40 +90,113 @@ async def bootstrap(
             manifest_path=manifest_path,
             agents=list(manifest.agents.keys()),
             tools=[t.name for t in manifest.tools],
+            sub_agents=[s.name for s in manifest.sub_agents],
         )
 
+    # ── 4. StorageProvider — 技术决策，从 .env 读取 ───────────
+    storage_mode = os.environ.get("ARTIPIVOT_STORAGE_MODE", "memory")
+    storage_config = StorageConfig(mode=storage_mode)
+    storage = StorageProvider(storage_config)
+    await storage.setup()
+
+    _log.info("bootstrap.storage_ready", mode=storage_config.mode)
+
+    # ── 4b. MemoryConfig from manifest ──
+    memory_config = MemoryConfig.from_dict(manifest.memory) if manifest.memory else None
+    if memory_config and (
+        memory_config.extraction.enabled
+        or memory_config.embedding.enabled
+        or memory_config.context_window.enabled
+    ):
+        _log.info("bootstrap.memory_enabled", extraction=memory_config.extraction.enabled)
+    else:
+        memory_config = None  # All disabled → None (zero overhead)
+
     # ── 5. ModelProvider — populate from manifest ───────────────
-    model_provider = ModelProvider(store, notifier)
+    model_provider = ModelProvider(
+        storage.document_store,
+        storage.change_notifier,
+    )
     model_provider.load_from_manifest(manifest)
     await model_provider.start()
 
     # ── 6. ConfigCenter — populate from manifest ────────────────
-    config_center = ConfigCenter(store, notifier)
+    config_center = ConfigCenter(
+        storage.document_store,
+        storage.change_notifier,
+    )
     config_center.load_from_manifest(manifest)
     await config_center.start()
 
-    # ── 7. ToolRegistry — register from manifest ────────────────
+    # ── 7. ToolRegistry — from YAML (CLI) or DocumentStore ─────
     tool_registry = ToolRegistry()
-    tool_registry.register_from_manifest(
-        manifest.tools, include_builtins=register_builtin_tools,
-    )
+    if manifest.tools:
+        # CLI / YAML mode: load tools directly from manifest
+        tool_registry.register_from_manifest(
+            manifest.tools, include_builtins=register_builtin_tools,
+        )
+        _log.info("bootstrap.tools_from_yaml", count=len(tool_registry.names))
+    else:
+        # Server mode: load from DocumentStore (may be empty)
+        await tool_registry.load_from_store(
+            storage.document_store,
+            include_builtins=register_builtin_tools,
+        )
+        _log.info("bootstrap.tools_from_store", count=len(tool_registry.names))
 
-    # ── 8. TransformRegistry — register builtins ───────────────
-        # ── 8. SubAgentRegistry — build sub-agents from manifest ─────
+    # ── 8. SubAgentRegistry — from YAML (CLI) or DocumentStore ──
     sub_agent_registry = SubAgentRegistry(
         tool_registry,
         model_provider=model_provider,
     )
+    if manifest.sub_agents:
+        # CLI / YAML mode: build sub-agents directly from manifest
+        for sd in manifest.sub_agents:
+            from artipivot.agents.declarative import (
+                DeclarativeSubAgentDef,
+                build_declarative_subagent,
+            )
+            if sd.graph:
+                from artipivot.graph.dsl import parse_graph_def, build_dsl_graph
+                gd = parse_graph_def(sd.name, sd.graph)
+                graph = build_dsl_graph(
+                    gd,
+                    tool_registry=tool_registry,
+                    model_provider=model_provider,
+                )
+                sub_agent_registry.register(sd.name, graph)
+            else:
+                defn = DeclarativeSubAgentDef(
+                    name=sd.name,
+                    strategy=sd.strategy,
+                    tools=sd.tools,
+                    system_prompt=sd.system_prompt,
+                    strategy_config=sd.strategy_config,
+                )
+                tool_node = tool_registry.get_tool_node(sd.tools)
+                graph = build_declarative_subagent(defn, tool_node)
+                sub_agent_registry.register(sd.name, graph, defn=defn)
+        _log.info("bootstrap.sub_agents_from_yaml", count=len(manifest.sub_agents))
+    else:
+        # Server mode: load from DocumentStore (may be empty)
+        await sub_agent_registry.load_from_store(storage.document_store)
+        _log.info("bootstrap.sub_agents_from_store")
 
+    # Also register any inline sub-agents from agent definitions
     sub_agent_registry.register_from_manifest(manifest.agents)
 
     _log.info("bootstrap.sub_agents_built", count=len(sub_agent_registry.list_sub_agents()))
 
     # ── 9. Gateway + GraphFactory + AgentRegistry ───────────────
-    checkpointer = create_checkpointer(backend=checkpointer_backend)
-    lg_store = create_store(backend=store_backend)
+    # L2/L3 controlled by memory_config
+    checkpointer = storage.checkpointer if memory_config and memory_config.l2 else None
+    lg_store = storage.store if memory_config and memory_config.l3 else None
 
-    gateway = AgentGateway(model_provider, config_center=config_center)
+    gateway = AgentGateway(
+        model_provider,
+        config_center=config_center,
+        storage_provider=storage,
+    )
     graph_factory = GraphFactory(config_center)
 
     agent_registry = AgentRegistry(
@@ -161,11 +223,29 @@ async def bootstrap(
 
     _log.info("bootstrap.agents_registered", agents=agent_registry.list_agents())
 
-    # ── 11. RateLimiter + PluginManager ─────────────────────────
-    rate_limiter = RateLimiter()
-    plugin_manager = PluginManager(store=store, notifier=notifier)
+    # ── 9b. ToolReloader + ToolWatcher ──────────────────────────
+    from artipivot.tools.reloader import ToolReloader
+    from artipivot.tools.watcher import ToolWatcher
 
-    # ── 12. Wire up FastAPI dependencies ────────────────────────
+    tool_reloader = ToolReloader(
+        gateway=gateway,
+        tool_registry=tool_registry,
+        agent_registry=agent_registry,
+        store=lg_store,
+        checkpointer=checkpointer,
+    )
+    tool_watcher = ToolWatcher(storage.change_notifier, tool_reloader)
+    await tool_watcher.start()
+    _log.info("bootstrap.tool_watcher_started")
+
+    # ── 10. RateLimiter + PluginManager ─────────────────────────
+    rate_limiter = RateLimiter()
+    plugin_manager = PluginManager(
+        store=storage.document_store,
+        notifier=storage.change_notifier,
+    )
+
+    # ── 11. Wire up FastAPI dependencies ────────────────────────
     set_components(
         gateway=gateway,
         config_center=config_center,
@@ -174,6 +254,9 @@ async def bootstrap(
         tool_registry=tool_registry,
         agent_registry=agent_registry,
         sub_agent_registry=sub_agent_registry,
+        storage_provider=storage,
+        tool_reloader=tool_reloader,
+        memory_config=memory_config,
     )
 
     return create_app()
@@ -211,9 +294,6 @@ def bootstrap_sync(
     log_dir: str | None = None,
     log_level: str | None = None,
     log_format: str | None = None,
-    checkpointer_backend: str = "memory",
-    store_backend: str = "memory",
-    storage_backend: str = "memory",
     register_builtin_tools: bool = True,
 ):
     """Synchronous wrapper for bootstrap — usable as uvicorn factory.
@@ -226,8 +306,5 @@ def bootstrap_sync(
         log_dir=log_dir,
         log_level=log_level,
         log_format=log_format,
-        checkpointer_backend=checkpointer_backend,
-        store_backend=store_backend,
-        storage_backend=storage_backend,
         register_builtin_tools=register_builtin_tools,
     ))

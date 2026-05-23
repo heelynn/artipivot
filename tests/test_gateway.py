@@ -35,28 +35,26 @@ class TestMemoryFactories:
 
     def test_create_checkpointer_invalid(self):
         from artipivot.memory.checkpointer import create_checkpointer
-        with pytest.raises(ValueError, match="Unknown checkpointer backend"):
+        with pytest.raises(ValueError, match="No persistent backend"):
             create_checkpointer("nonexistent")
 
-    def test_create_checkpointer_postgres_no_uri(self):
+    def test_create_checkpointer_persistent_without_registration(self):
         from artipivot.memory.checkpointer import create_checkpointer
-        with pytest.raises(ValueError, match="PostgreSQL URI"):
+        with pytest.raises(ValueError, match="No persistent backend"):
             create_checkpointer("postgres")
 
-    def test_register_custom_checkpointer(self):
-        from artipivot.memory.checkpointer import (
-            available_checkpointer_backends,
-            create_checkpointer,
-            register_checkpointer_backend,
-        )
+    def test_register_persistent_and_create_checkpointer(self):
+        from artipivot.memory.checkpointer import create_checkpointer
+        from artipivot.storage.factory import PostgresFactory
+        from artipivot.storage.registry import register_persistent
 
-        class FakeCheckpointer:
-            pass
-
-        register_checkpointer_backend("fake", lambda **kw: FakeCheckpointer())
-        cp = create_checkpointer("fake")
-        assert isinstance(cp, FakeCheckpointer)
-        assert "fake" in available_checkpointer_backends()
+        register_persistent(PostgresFactory())
+        try:
+            with pytest.raises(ValueError, match="URI required"):
+                create_checkpointer("postgres")
+        finally:
+            import artipivot.storage.registry as reg
+            reg._persistent_factory = None
 
     def test_create_store(self):
         from artipivot.memory.store import create_store
@@ -65,25 +63,10 @@ class TestMemoryFactories:
 
     def test_create_store_invalid(self):
         from artipivot.memory.store import create_store
-        with pytest.raises(ValueError, match="Unknown store backend"):
+        with pytest.raises(ValueError, match="No persistent backend"):
             create_store("nonexistent")
 
-    def test_create_store_postgres_no_uri(self):
+    def test_create_store_persistent_without_registration(self):
         from artipivot.memory.store import create_store
-        with pytest.raises(ValueError, match="PostgreSQL URI"):
+        with pytest.raises(ValueError, match="No persistent backend"):
             create_store("postgres")
-
-    def test_register_custom_store(self):
-        from artipivot.memory.store import (
-            available_store_backends,
-            create_store,
-            register_store_backend,
-        )
-
-        class FakeStore:
-            pass
-
-        register_store_backend("fake", lambda **kw: FakeStore())
-        st = create_store("fake")
-        assert isinstance(st, FakeStore)
-        assert "fake" in available_store_backends()

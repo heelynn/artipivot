@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
@@ -10,6 +9,7 @@ from langgraph.prebuilt import ToolNode
 from artipivot.agents.base import SubAgentDef
 from artipivot.agents.strategies import register_strategy
 from artipivot.agents.strategies.base import Strategy
+from artipivot.agents.strategies.memory import build_messages_with_memory
 from artipivot.graph.context import AgentContext
 from artipivot.graph.state import SubAgentState
 from artipivot.observability import log, bind
@@ -50,12 +50,9 @@ class FunctionCallingStrategy(Strategy):
                 )
                 system_prompt = prompt_cfg.get("system", default_prompt)
 
-            messages = []
-            if system_prompt:
-                messages.append(SystemMessage(content=system_prompt))
-            if st.get("query"):
-                messages.append(HumanMessage(content=st["query"]))
-            messages.extend(st.get("messages", []))
+            # Build messages with L3 memory + context window compression
+            store = getattr(rt, "store", None)
+            messages = await build_messages_with_memory(st, ctx, store, system_prompt)
 
             log.info("llm.call", messages_count=len(messages))
 

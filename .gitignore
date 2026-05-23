@@ -43,5 +43,8 @@ Thumbs.db
 htmlcov/
 .mypy_cache/
 
+# ArtiPivot local data
+.artipivot/
+
 # Claude Code
 .claude/

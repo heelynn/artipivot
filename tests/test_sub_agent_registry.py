@@ -9,7 +9,6 @@ from artipivot.agents.declarative import DeclarativeSubAgentDef
 from artipivot.graph.dsl import parse_graph_def
 from artipivot.gateway.sub_agent_registry import SubAgentRegistry
 from artipivot.tools.registry import ToolRegistry
-from artipivot.transforms.registry import TransformRegistry
 
 
 def _make_tool_registry():
@@ -95,19 +94,13 @@ class TestSubAgentRegistryBuild:
 
     def test_build_dsl(self):
         tools = _make_tool_registry()
-        treg = TransformRegistry()
 
-        def upper(data: dict) -> dict:
-            return {k: v.upper() if isinstance(v, str) else v for k, v in data.items()}
-
-        treg.register("upper", upper)
-
-        reg = SubAgentRegistry(tools, transform_registry=treg)
+        reg = SubAgentRegistry(tools)
         gd = parse_graph_def(
             "pipeline",
             {
                 "nodes": {
-                    "step1": {"type": "transform", "handler": "upper"},
+                    "step1": {"type": "tool", "tool": "web_search"},
                 },
                 "edges": [
                     {"from": "START", "to": "step1"},

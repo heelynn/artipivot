@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from artipivot.api.deps import get_gateway, get_rate_limiter
+from artipivot.api.deps import get_gateway, get_memory_config, get_rate_limiter
 from artipivot.config.ratelimit import RateLimitError
 
 chat_router = APIRouter()
@@ -37,7 +37,8 @@ async def chat(agent_id: str, req: ChatRequest):
     # Invoke agent
     try:
         result = await gateway.invoke(
-            agent_id, req.message, req.thread_id, user_id=req.user_id
+            agent_id, req.message, req.thread_id, user_id=req.user_id,
+            memory_config=get_memory_config(),
         )
     except ValueError:
         raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")

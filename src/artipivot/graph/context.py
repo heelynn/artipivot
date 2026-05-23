@@ -10,6 +10,7 @@ from langchain_core.tools import BaseTool
 
 if TYPE_CHECKING:
     from artipivot.config.center import ConfigCenter
+    from artipivot.memory.config import MemoryConfig
 
 
 @dataclass
@@ -22,6 +23,7 @@ class AgentContext:
     model: BaseChatModel
     available_tools: list[BaseTool] = field(default_factory=list)
     config_center: ConfigCenter | None = None
+    memory_config: MemoryConfig | None = None
 
     def bound_model(self, tools: list[BaseTool] | None = None) -> BaseChatModel:
         """Return model with tools bound. Falls back to context tools if none given."""

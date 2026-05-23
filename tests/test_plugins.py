@@ -18,24 +18,19 @@ class TestStorageBundle:
         bundle = StorageBundle(StorageConfig())
         assert bundle.document_store is not None
         assert bundle.change_notifier is not None
-        assert bundle.artifact_store is not None
 
     def test_custom_options(self):
         from artipivot.storage.bundle import StorageBundle, StorageConfig
 
-        bundle = StorageBundle(StorageConfig(
-            document_backend="memory",
-            notifier_backend="memory",
-            artifact_backend="memory",
-            options={"artifact": {"base_dir": "/tmp/test_artifacts"}},
-        ))
-        assert bundle.artifact_store is not None
+        bundle = StorageBundle(StorageConfig(mode="memory"))
+        assert bundle.document_store is not None
 
-    def test_unknown_backend_raises(self):
+    def test_persistent_mode_without_registration(self):
         from artipivot.storage.bundle import StorageBundle, StorageConfig
 
-        with pytest.raises(ValueError, match="Unknown document backend"):
-            StorageBundle(StorageConfig(document_backend="nonexistent"))
+        bundle = StorageBundle(StorageConfig(mode="persistent"))
+        # Without registering a persistent factory, backends gracefully return None
+        assert bundle.document_store is None
 
     def test_from_config(self):
         from artipivot.storage.bundle import StorageBundle, StorageConfig
@@ -288,7 +283,8 @@ class TestHotRebuild:
         config_center = ConfigCenter(store, notifier)
         gateway = AgentGateway(model_provider=provider, config_center=config_center)
         factory = GraphFactory(config_center)
-        tools = ToolRegistry({"web_search": web_search})
+        tools = ToolRegistry()
+        tools.register(web_search)
         pm = PluginManager(store, notifier)
         rebuilder = GraphRebuilder(gateway, factory, tools, pm)
 

@@ -16,8 +16,8 @@ class TestGraphToMermaid:
             "linear",
             {
                 "nodes": {
-                    "step1": {"type": "transform", "handler": "upper"},
-                    "step2": {"type": "transform", "handler": "lower"},
+                    "step1": {"type": "tool", "tool": "web_search"},
+                    "step2": {"type": "tool", "tool": "code_exec"},
                 },
                 "edges": [
                     {"from": "START", "to": "step1"},
@@ -31,8 +31,9 @@ class TestGraphToMermaid:
         assert "START --> step1" in mermaid
         assert "step1 --> step2" in mermaid
         assert "step2 --> END" in mermaid
-        # Transform nodes should be hexagons
-        assert "{{" in mermaid or "}}" in mermaid
+        # Tool nodes use subroutine shape
+        assert "[[" in mermaid
+        assert "]]" in mermaid
 
     def test_parallel_graph(self):
         gd = parse_graph_def(
@@ -41,7 +42,7 @@ class TestGraphToMermaid:
                 "nodes": {
                     "search": {"type": "tool", "tool": "web_search"},
                     "execute": {"type": "tool", "tool": "code_exec"},
-                    "merge": {"type": "transform", "handler": "merge"},
+                    "merge": {"type": "llm", "system_prompt": "Merge results"},
                 },
                 "edges": [
                     {"from": "START", "targets": ["search", "execute"]},
@@ -126,8 +127,8 @@ class TestGraphToMermaid:
             {
                 "nodes": {
                     "router": {"type": "llm"},
-                    "path_a": {"type": "transform", "handler": "upper"},
-                    "path_b": {"type": "transform", "handler": "lower"},
+                    "path_a": {"type": "tool", "tool": "web_search"},
+                    "path_b": {"type": "tool", "tool": "code_exec"},
                 },
                 "edges": [
                     {"from": "START", "to": "router"},

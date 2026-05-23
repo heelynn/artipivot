@@ -31,7 +31,8 @@ from artipivot.memory.checkpointer import create_checkpointer
 from artipivot.memory.store import create_store
 from artipivot.models.provider import ModelProvider
 from artipivot.plugins.manager import PluginManager
-from artipivot.storage.memory import InMemoryDocumentStore, InProcessNotifier
+from artipivot.storage.memory import InProcessNotifier
+from artipivot.storage.sqlite import SQLiteDocumentStore
 from artipivot.tools.builtin.code_exec import code_exec
 from artipivot.tools.builtin.file_io import file_io
 from artipivot.tools.builtin.web_search import web_search
@@ -89,7 +90,7 @@ def quickstart(
         tool_registry.register(t)
 
     # 2. Storage
-    doc_store = InMemoryDocumentStore()
+    doc_store = SQLiteDocumentStore()
     notifier = InProcessNotifier()
 
     # 3. Seed model config

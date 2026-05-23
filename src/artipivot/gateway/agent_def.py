@@ -39,9 +39,11 @@ class AgentDef:
     graph_sub_agents: dict[str, GraphDef] = field(default_factory=dict)
     # {"research_and_code": GraphDef(...)}
 
-    # Sub-agent references (new style — just names)
-    sub_agent_refs: list[str] = field(default_factory=list)
-    # ["code_writer", "research_and_code"]
+    # Sub-agent references
+    # Can be bare strings ("code_writer") or dicts with public/private flag:
+    #   {name: "code_writer", public: true}          — public pool reference
+    #   {name: "my_analyzer", public: false, strategy: "react", ...} — private inline
+    sub_agent_refs: list = field(default_factory=list)
 
     # Tools — global whitelist for this agent
     tools: list[str] = field(default_factory=list)
@@ -95,11 +97,53 @@ class AgentDef:
                 if value.get("description"):
                     intent_descriptions[intent] = value["description"]
 
-        # Backward compat: populate sub_agent_refs from old-style dict keys
-        all_sub_names = (
+        # Parse sub_agent_refs — supports strings and dicts
+        agent_id = data["agent_id"]
+        raw_refs = data.get("sub_agent_refs", [])
+        sub_agent_refs = []
+        for ref in raw_refs:
+            if isinstance(ref, str):
+                # Bare string — backward compat (checks private then public)
+                sub_agent_refs.append(ref)
+            elif isinstance(ref, dict):
+                name = ref.get("name", "")
+                if not name:
+                    continue
+                if ref.get("public", True):
+                    # Public pool reference — just the name
+                    sub_agent_refs.append(name)
+                else:
+                    # Private sub-agent — namespace with agent_id, store inline def
+                    ns_name = f"{agent_id}:{name}"
+                    sub_agent_refs.append(ns_name)
+                    if ref.get("graph"):
+                        from artipivot.graph.dsl import parse_graph_def
+                        graph_sub_agents[ns_name] = parse_graph_def(ns_name, ref["graph"])
+                    elif ref.get("strategy"):
+                        decl_sub_agents[ns_name] = DeclarativeSubAgentDef(
+                            name=ns_name,
+                            strategy=ref["strategy"],
+                            tools=ref.get("tools", []),
+                            system_prompt=ref.get("system_prompt", ""),
+                            strategy_config=ref.get("strategy_config", {}),
+                        )
+                    else:
+                        sub_agents[ns_name] = SubAgentDef(
+                            name=ns_name,
+                            tools=ref.get("tools", []),
+                            system_prompt=ref.get("system_prompt", ""),
+                            max_iterations=ref.get("strategy_config", {}).get("max_iterations", 10),
+                        )
+            else:
+                sub_agent_refs.append(str(ref))
+
+        # Backward compat: also include old-style inline def names
+        old_style_names = (
             set(sub_agents) | set(decl_sub_agents) | set(graph_sub_agents)
         )
-        sub_agent_refs = list(all_sub_names)
+        for n in old_style_names:
+            if n not in sub_agent_refs:
+                sub_agent_refs.append(n)
 
         return cls(
             agent_id=data["agent_id"],

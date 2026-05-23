@@ -1,71 +1,49 @@
-"""StorageBundle — unified factory for storage components."""
+"""StorageBundle — backward-compatible wrapper around StorageProvider.
+
+.. deprecated::
+    Use :class:`StorageProvider` directly for new code.
+    StorageBundle is retained as a thin convenience wrapper.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import warnings
+from typing import Any
 
-from artipivot.storage.base import ArtifactStore, ChangeNotifier, DocumentStore
-
-
-@dataclass
-class StorageConfig:
-    """Storage backend configuration."""
-
-    document_backend: str = "memory"
-    notifier_backend: str = "memory"
-    artifact_backend: str = "memory"
-    options: dict = field(default_factory=dict)
+from artipivot.storage.base import ChangeNotifier, DocumentStore
+from artipivot.storage.provider import StorageConfig, StorageProvider
 
 
 class StorageBundle:
-    """Unified storage component factory — creates all three from config."""
+    """Backward-compatible storage factory — delegates to StorageProvider.
+
+    Use StorageProvider directly in new code.
+    """
 
     def __init__(self, config: StorageConfig) -> None:
+        warnings.warn(
+            "StorageBundle is deprecated — use StorageProvider directly",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.config = config
-        self.document_store: DocumentStore = self._create_document_store(config)
-        self.change_notifier: ChangeNotifier = self._create_notifier(config)
-        self.artifact_store: ArtifactStore = self._create_artifact_store(config)
+        self._provider = StorageProvider(config)
 
-    @staticmethod
-    def _create_document_store(config: StorageConfig) -> DocumentStore:
-        opts = config.options.get("document", {})
-        match config.document_backend:
-            case "memory":
-                from artipivot.storage.memory import InMemoryDocumentStore
+    @property
+    def document_store(self) -> DocumentStore:
+        return self._provider.document_store
 
-                return InMemoryDocumentStore()
-            case _:
-                raise ValueError(
-                    f"Unknown document backend: {config.document_backend}"
-                )
-
-    @staticmethod
-    def _create_notifier(config: StorageConfig) -> ChangeNotifier:
-        match config.notifier_backend:
-            case "memory":
-                from artipivot.storage.memory import InProcessNotifier
-
-                return InProcessNotifier()
-            case _:
-                raise ValueError(
-                    f"Unknown notifier backend: {config.notifier_backend}"
-                )
-
-    @staticmethod
-    def _create_artifact_store(config: StorageConfig) -> ArtifactStore:
-        opts = config.options.get("artifact", {})
-        match config.artifact_backend:
-            case "memory":
-                from artipivot.storage.memory import InMemoryArtifactStore
-
-                base_dir = opts.get("base_dir", ".artifacts")
-                return InMemoryArtifactStore(base_dir=base_dir)
-            case _:
-                raise ValueError(
-                    f"Unknown artifact backend: {config.artifact_backend}"
-                )
+    @property
+    def change_notifier(self) -> ChangeNotifier:
+        return self._provider.change_notifier
 
     @classmethod
     def from_config(cls, config: StorageConfig) -> StorageBundle:
         """Create a StorageBundle from a StorageConfig."""
         return cls(config)
+
+    # Expose provider for migration paths
+    @property
+    def provider(self) -> StorageProvider:
+        """Underlying StorageProvider instance."""
+        return self._provider

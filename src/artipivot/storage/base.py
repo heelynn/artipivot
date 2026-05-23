@@ -1,9 +1,9 @@
-"""Storage abstract interfaces — DocumentStore, ChangeNotifier, ArtifactStore."""
+"""Storage abstract interfaces — DocumentStore, ChangeNotifier."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from typing import Callable
 
 
 class DocumentStore(ABC):
@@ -28,6 +28,26 @@ class DocumentStore(ABC):
     async def query(self, collection: str, filter: dict) -> list[dict]:
         """Query documents matching filter. Empty filter returns all."""
         ...
+
+    # ── notification methods (for PollingChangeNotifier) ──
+    # Not abstract — stores that don't support polling simply don't implement these.
+    # PollingChangeNotifier uses getattr + iscoroutinefunction to detect both sync/async.
+
+    def insert_notification(
+        self, collection: str, key: str, action: str, data: dict
+    ) -> None:
+        """Insert a notification record (sync or async)."""
+        raise NotImplementedError
+
+    def query_notifications(
+        self, collection: str, since: str
+    ) -> list[dict]:
+        """Query notifications since a timestamp (sync or async)."""
+        raise NotImplementedError
+
+    def cleanup_notifications(self, retention_hours: float = 1.0) -> int:
+        """Delete old notifications. Returns deleted count (sync or async)."""
+        raise NotImplementedError
 
 
 class ChangeNotifier(ABC):
@@ -54,18 +74,4 @@ class ChangeNotifier(ABC):
     @abstractmethod
     async def stop(self) -> None:
         """Stop the notifier."""
-        ...
-
-
-class ArtifactStore(ABC):
-    """Abstract artifact store for plugin packages."""
-
-    @abstractmethod
-    async def upload(self, local_path: str, remote_key: str) -> str:
-        """Upload a file, return its URL/path."""
-        ...
-
-    @abstractmethod
-    async def download(self, remote_key: str, local_path: str) -> str:
-        """Download a file, return local path."""
         ...

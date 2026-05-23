@@ -311,7 +311,9 @@ class TestMultiAgentIsolation:
         config_center = ConfigCenter(store, notifier)
         gateway = AgentGateway(model_provider=provider, config_center=config_center)
         factory = GraphFactory(config_center)
-        tools = ToolRegistry({"web_search": web_search, "code_exec": code_exec})
+        tools = ToolRegistry()
+        tools.register(web_search)
+        tools.register(code_exec)
 
         registry = AgentRegistry(gateway, factory, tools)
 
@@ -393,7 +395,9 @@ class TestMultiAgentIsolation:
         from artipivot.tools.builtin.web_search import web_search
         from artipivot.tools.builtin.code_exec import code_exec
 
-        tools = ToolRegistry({"web_search": web_search, "code_exec": code_exec})
+        tools = ToolRegistry()
+        tools.register(web_search)
+        tools.register(code_exec)
 
         # code_agent sub-agent gets both tools
         code_tools = tools.get_for_agent(["web_search", "code_exec"])

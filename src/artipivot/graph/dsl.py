@@ -357,6 +357,16 @@ def build_dsl_graph(
     Supports human-in-the-loop via interrupt and checkpointer.
     """
     compiled_sub_agents = compiled_sub_agents or {}
+
+    # Validate before building — warnings are logged, not raised
+    warnings = validate_graph_def(
+        graph_def,
+        tool_registry=tool_registry,
+        compiled_sub_agents=compiled_sub_agents,
+    )
+    for w in warnings:
+        log.warning("dsl.validation_warning", graph=graph_def.name, detail=w)
+
     builder = StateGraph(SubAgentState)
 
     # Add nodes
@@ -465,6 +475,9 @@ def _make_llm_node(node_def: NodeDef, tool_registry=None, model_provider=None) -
         # Bind tools if configured
         if tool_names and _tool_registry is not None:
             resolved = [_tool_registry.get(name) for name in tool_names]
+            missing = [tool_names[i] for i, t in enumerate(resolved) if t is None]
+            if missing:
+                log.warning("dsl.missing_llm_tools", node=node_def.name, tools=missing)
             resolved = [t for t in resolved if t is not None]
             if resolved:
                 model = model.bind_tools(resolved)
@@ -509,13 +522,12 @@ def _wrap_with_retry(node_fn: Callable, retry_cfg: dict, node_name: str) -> Call
 
 
 def _make_tool_node(node_def: NodeDef, tool_registry) -> Callable:
-    """Create a single-tool execution node."""
+    """Create a single-tool execution node.
+
+    Uses get_or_stub() to auto-stub missing tools instead of crashing.
+    """
     tool_name = node_def.tool
-    tool = tool_registry.get(tool_name)
-    if tool is None:
-        raise ValueError(
-            f"Tool '{tool_name}' not found in registry for node '{node_def.name}'"
-        )
+    tool = tool_registry.get_or_stub(tool_name)
 
     async def tool_node(state: SubAgentState, runtime) -> dict:
         msgs = state.get("messages", [])

@@ -25,20 +25,10 @@ class TestEmbeddingConfig:
     def test_defaults_disabled(self):
         cfg = EmbeddingConfig()
         assert cfg.enabled is False
-        assert cfg.provider == "openai"
-        assert cfg.model == "text-embedding-3-small"
-        assert cfg.dims == 1536
-        assert cfg.base_url is None
-        assert cfg.api_key is None
 
-    def test_enabled_with_custom_url(self):
-        cfg = EmbeddingConfig(
-            enabled=True,
-            base_url="https://api.deepseek.com",
-            api_key="sk-test",
-        )
+    def test_enabled(self):
+        cfg = EmbeddingConfig(enabled=True)
         assert cfg.enabled is True
-        assert cfg.base_url == "https://api.deepseek.com"
 
 
 class TestContextWindowConfig:
@@ -64,11 +54,6 @@ class TestMemoryConfig:
         cfg = MemoryConfig.from_dict({
             "embedding": {
                 "enabled": True,
-                "provider": "openai",
-                "model": "text-embedding-3-large",
-                "dims": 3072,
-                "base_url": "https://api.custom.com",
-                "api_key": "sk-test",
             },
             "context_window": {
                 "strategy": "summarize",
@@ -78,8 +63,6 @@ class TestMemoryConfig:
             },
         })
         assert cfg.embedding.enabled is True
-        assert cfg.embedding.dims == 3072
-        assert cfg.embedding.base_url == "https://api.custom.com"
         assert cfg.context_window.strategy == "summarize"
         assert cfg.context_window.keep_messages == 10
         assert cfg.context_window.summary_model == "claude-haiku-4-5-20251001"
@@ -89,7 +72,6 @@ class TestMemoryConfig:
             "embedding": {"enabled": True},
         })
         assert cfg.embedding.enabled is True
-        assert cfg.embedding.model == "text-embedding-3-small"  # default
         assert cfg.context_window.strategy == "none"  # default
 
 

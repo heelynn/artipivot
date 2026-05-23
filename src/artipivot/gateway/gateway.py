@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import structlog
@@ -34,15 +35,44 @@ class AgentGateway:
         model_provider: ModelProvider,
         *,
         config_center=None,
+        storage_provider=None,
     ) -> None:
         self._graphs: dict[str, CompiledStateGraph] = {}
         self._model_provider = model_provider
         self._config_center = config_center
+        self._storage_provider = storage_provider
         self._callback = GraphLoggingCallback()
+        self._rebuild_locks: dict[str, asyncio.Lock] = {}
 
     def register(self, agent_id: str, graph: CompiledStateGraph) -> None:
         """Register a compiled graph for an agent."""
         self._graphs[agent_id] = graph
+
+    def list_agent_ids(self) -> list[str]:
+        """Return all registered agent IDs."""
+        return list(self._graphs.keys())
+
+    def rebuild_guard(self, agent_id: str):
+        """Async context manager that serializes rebuilds per agent_id.
+
+        Usage:
+            async with gateway.rebuild_guard(agent_id):
+                new_graph = build_new_graph()
+                gateway.register(agent_id, new_graph)
+        """
+        lock = self._rebuild_locks.setdefault(agent_id, asyncio.Lock())
+
+        class _Guard:
+            def __init__(self, _lock):
+                self._lock = _lock
+
+            async def __aenter__(self):
+                await self._lock.acquire()
+
+            async def __aexit__(self, *args):
+                self._lock.release()
+
+        return _Guard(lock)
 
     async def invoke(
         self,
@@ -51,6 +81,7 @@ class AgentGateway:
         thread_id: str,
         *,
         user_id: str = "default_user",
+        memory_config=None,
     ) -> dict:
         """Invoke a single turn on the agent's graph."""
         if agent_id not in self._graphs:
@@ -88,6 +119,7 @@ class AgentGateway:
                     thread_id=full_thread_id,
                     model=model,
                     config_center=self._config_center,
+                    memory_config=memory_config,
                 ),
             )
             elapsed = int((time.perf_counter() - t0) * 1000)
@@ -116,6 +148,16 @@ class AgentGateway:
                 parsed=parsed,
             )
             otel.record_request_duration(elapsed, agent_id=agent_id)
+
+            # L3 async write — fire and forget
+            self._maybe_write_memory(
+                agent_id=agent_id,
+                user_id=user_id,
+                result=result,
+                model=model,
+                memory_config=memory_config,
+            )
+
             return result
         except Exception as e:
             elapsed = int((time.perf_counter() - t0) * 1000)
@@ -124,7 +166,7 @@ class AgentGateway:
         finally:
             clear_trace()
 
-    async def stream(self, agent_id: str, message: str, thread_id: str, *, user_id: str = "default_user"):
+    async def stream(self, agent_id: str, message: str, thread_id: str, *, user_id: str = "default_user", memory_config=None):
         """Stream responses from the agent's graph."""
         if agent_id not in self._graphs:
             raise ValueError(f"Unknown agent: {agent_id}")
@@ -156,6 +198,7 @@ class AgentGateway:
                     thread_id=full_thread_id,
                     model=model,
                     config_center=self._config_center,
+                    memory_config=memory_config,
                 ),
             ):
                 yield chunk
@@ -168,3 +211,37 @@ class AgentGateway:
             raise
         finally:
             clear_trace()
+
+    def _maybe_write_memory(
+        self,
+        *,
+        agent_id: str,
+        user_id: str,
+        result: dict,
+        model,
+        memory_config,
+    ) -> None:
+        """Fire-and-forget L3 memory extraction if enabled."""
+        if not memory_config or not memory_config.extraction.enabled:
+            return
+
+        store = None
+        if self._storage_provider:
+            store = self._storage_provider.store
+
+        if not store:
+            return
+
+        messages = result.get("messages", []) if isinstance(result, dict) else []
+
+        async def _do_write():
+            from artipivot.memory.extraction import write_memory
+            try:
+                await write_memory(
+                    store, agent_id, user_id, messages, model,
+                    memory_config.extraction,
+                )
+            except Exception:
+                log.warning("L3 memory extraction failed", exc_info=True)
+
+        asyncio.create_task(_do_write())

@@ -63,6 +63,39 @@ class AgentRegistry:
         """List all registered agent_ids."""
         return list(self._defs)
 
+    async def rebuild_agent(
+        self,
+        agent_id: str,
+        *,
+        checkpointer=None,
+        store=None,
+    ) -> None:
+        """Rebuild and re-register a single agent graph (for hot-reload).
+
+        Uses rebuild_guard to serialize concurrent rebuilds of the same agent.
+        The old graph continues serving in-flight requests via reference semantics.
+        """
+        agent_def = self._defs.get(agent_id)
+        if agent_def is None:
+            raise ValueError(f"Agent not found: {agent_id}")
+
+        async with self._gateway.rebuild_guard(agent_id):
+            sub_agent_nodes = self._resolve_sub_agents(
+                agent_def, checkpointer=checkpointer
+            )
+            graph = self._factory.build(
+                agent_id=agent_id,
+                sub_agent_nodes=sub_agent_nodes,
+                checkpointer=checkpointer,
+                store=store,
+            )
+            self._gateway.register(agent_id, graph)
+            log.info(
+                "registry.agent_rebuilt",
+                agent_id=agent_id,
+                sub_agents=list(sub_agent_nodes.keys()),
+            )
+
     def _resolve_sub_agents(
         self, agent_def: AgentDef, *, checkpointer=None
     ) -> dict[str, CompiledStateGraph]:
@@ -77,23 +110,60 @@ class AgentRegistry:
         result: dict[str, CompiledStateGraph] = {}
 
         for name in agent_def.sub_agent_refs:
-            graph = self._sub_agent_registry.get(name)
-            if graph is not None:
-                result[name] = graph
-                continue
+            graph = self._resolve_one_sub_agent(
+                agent_def, name, checkpointer=checkpointer
+            )
+            # Display name: strip agent_id prefix for result keys
+            display_name = name
+            result[display_name] = graph
 
-            # Backward compat: auto-build from old-style dicts if present
-            defn = self._find_def(agent_def, name)
-            if defn is not None:
-                graph = self._sub_agent_registry.build_and_register(
-                    name, defn, checkpointer=checkpointer,
-                )
-                result[name] = graph
-            else:
-                log.error("registry.sub_agent_not_found", name=name, agent_id=agent_def.agent_id)
-                raise ValueError(
-                    f"Sub-agent '{name}' not found in registry and no definition in AgentDef"
-                )
+        return result
+
+    def _resolve_one_sub_agent(
+        self, agent_def: AgentDef, name: str, *, checkpointer=None
+    ) -> CompiledStateGraph:
+        """Resolve a single sub-agent by name with namespace priority.
+
+        Resolution order:
+        1. Direct registry lookup by the given name (may be namespaced)
+        2. For simple names: check agent_id:name (agent private) before public pool
+        3. Check inline definitions in agent_def
+        4. Auto-stub
+        """
+        agent_id = agent_def.agent_id
+
+        # 1. Direct lookup (handles namespaced names like "agent_id:name")
+        graph = self._sub_agent_registry.get(name)
+        if graph is not None:
+            return graph
+
+        # 2. For simple (non-namespaced) names: check private namespace first,
+        #    then public pool
+        if ":" not in name:
+            ns_name = f"{agent_id}:{name}"
+            graph = self._sub_agent_registry.get(ns_name)
+            if graph is not None:
+                return graph
+
+        # 3. Check inline definitions (both simple and namespaced names)
+        defn = self._find_def(agent_def, name)
+        if defn is None and ":" not in name:
+            defn = self._find_def(agent_def, f"{agent_id}:{name}")
+        if defn is not None:
+            reg_name = defn.name if hasattr(defn, 'name') and defn.name else name
+            graph = self._sub_agent_registry.build_and_register(
+                reg_name, defn, checkpointer=checkpointer,
+            )
+            return graph
+
+        # 4. Not found → auto-stub
+        stub_name = name  # Use the given name for the stub
+        log.info(
+            "registry.sub_agent_stubbed",
+            name=stub_name,
+            agent_id=agent_id,
+        )
+        return self._sub_agent_registry.get_or_stub(stub_name)
 
         return result
 

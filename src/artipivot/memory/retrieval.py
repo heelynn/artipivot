@@ -6,6 +6,7 @@ import json
 
 from artipivot.memory.config import EmbeddingConfig
 from artipivot.memory.namespace import knowledge_ns, profile_ns
+from artipivot.storage.search import resolve_search_strategy
 
 
 async def build_memory_context(
@@ -18,7 +19,11 @@ async def build_memory_context(
     """Read long-term memory from Store and format for prompt injection.
 
     Returns a formatted string ready to append to system prompt, or empty string.
+
+    Raises:
+        EmbeddingNotSupportedError: if embedding is enabled but store lacks asearch.
     """
+    cfg = embedding_config or EmbeddingConfig()
     parts: list[str] = []
 
     # 1. User profile (always plain text lookup)
@@ -30,37 +35,23 @@ async def build_memory_context(
     except Exception:
         pass
 
-    # 2. Knowledge search
-    try:
-        ns = knowledge_ns(agent_id, user_id)
-        cfg = embedding_config or EmbeddingConfig()
+    # 2. Knowledge search — only when embedding is enabled and backend supports it
+    strategy = resolve_search_strategy(store, cfg)
+    # strategy is "semantic" or "none"; raises if backend doesn't support asearch
 
-        if cfg.enabled:
-            # Semantic search (vectors)
+    if strategy == "semantic":
+        try:
+            ns = knowledge_ns(agent_id, user_id)
             results = await store.asearch(ns, query=query, limit=3)
             if results:
-                facts = [r.value.get("fact", "") for r in results if r.value and r.value.get("fact")]
-                if facts:
-                    parts.append("[相关知识]\n" + "\n".join(f"- {f}" for f in facts))
-        else:
-            # Fallback: plain text query (list recent items)
-            items = await store.asearch(ns, query=query, limit=3) if hasattr(store, "asearch") else []
-            if not items:
-                # Try alist as fallback
-                try:
-                    all_items = await store.alist(ns)
-                    items = all_items[:3]
-                except Exception:
-                    items = []
-            if items:
                 facts = [
-                    item.value.get("fact", "")
-                    for item in items
-                    if hasattr(item, "value") and item.value and item.value.get("fact")
+                    r.value.get("fact", "")
+                    for r in results
+                    if r.value and r.value.get("fact")
                 ]
                 if facts:
                     parts.append("[相关知识]\n" + "\n".join(f"- {f}" for f in facts))
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     return "\n\n".join(parts) if parts else ""

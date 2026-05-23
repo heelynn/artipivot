@@ -52,6 +52,67 @@ class SubAgentRegistry:
         """Get compiled sub-agent by name."""
         return self._compiled.get(name)
 
+    def get_or_stub(self, name: str) -> CompiledStateGraph:
+        """Get a compiled sub-agent, or generate a stub placeholder.
+
+        The stub sub-agent is a single-node graph that returns a message
+        indicating the sub-agent is not yet available. When the real
+        sub-agent is registered later, the stub is automatically replaced.
+        """
+        graph = self._compiled.get(name)
+        if graph is not None:
+            return graph
+
+        stub = _build_stub_sub_agent(name)
+        self._compiled[name] = stub
+        logger.info("sub_agent.stub_created", name=name)
+        return stub
+
+    async def load_from_store(self, store) -> None:
+        """Load sub-agent definitions from DocumentStore "sub_agents" collection.
+
+        For each record, build and register the sub-agent graph.
+        Uses DeclarativeSubAgentDef or DSL graph depending on the record.
+        """
+        records = await store.query("sub_agents", {})
+        for record in records:
+            name = record.get("name", "")
+            status = record.get("status", "active")
+            if status != "active" or not name:
+                continue
+
+            if "graph" in record and record["graph"]:
+                # DSL graph sub-agent
+                from artipivot.graph.dsl import parse_graph_def, build_dsl_graph
+
+                gd = parse_graph_def(name, record["graph"])
+                graph = build_dsl_graph(
+                    gd,
+                    tool_registry=self._tools,
+                    model_provider=self._model_provider,
+                )
+                self.register(name, graph, defn=gd)
+            else:
+                # Declarative sub-agent
+                from artipivot.agents.declarative import (
+                    DeclarativeSubAgentDef,
+                    build_declarative_subagent,
+                )
+
+                tool_names = record.get("tools", [])
+                defn = DeclarativeSubAgentDef(
+                    name=name,
+                    strategy=record.get("strategy", "react"),
+                    tools=tool_names,
+                    system_prompt=record.get("system_prompt", ""),
+                    strategy_config=record.get("strategy_config", {}),
+                )
+                tool_node = self._tools.get_tool_node(tool_names)
+                graph = build_declarative_subagent(defn, tool_node)
+                self.register(name, graph, defn=defn)
+
+        logger.info("sub_agent.loaded_from_store", count=len(records))
+
     def get_def(self, name: str) -> object | None:
         """Get sub-agent definition by name."""
         return self._defs.get(name)
@@ -177,3 +238,26 @@ class SubAgentRegistry:
             return hashlib.md5(raw.encode()).hexdigest()
 
         return ""
+
+
+def _build_stub_sub_agent(name: str) -> CompiledStateGraph:
+    """Build a stub sub-agent graph that returns a placeholder response."""
+    from artipivot.graph.state import SubAgentState
+    from langgraph.graph import END, START, StateGraph
+
+    async def stub_node(state: SubAgentState, runtime) -> dict:
+        from langchain_core.messages import AIMessage
+
+        msg = AIMessage(
+            content=f"[STUB] Sub-agent '{name}' is not yet available. "
+            f"Please try again later."
+        )
+        return {"messages": [msg]}
+
+    stub_node.__name__ = f"stub:{name}"
+
+    builder = StateGraph(SubAgentState)
+    builder.add_node("stub", stub_node)
+    builder.add_edge(START, "stub")
+    builder.add_edge("stub", END)
+    return builder.compile()

@@ -2,14 +2,53 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from artipivot.api.deps import get_config_center, get_plugin_manager, get_rate_limiter, get_agent_registry, get_gateway, get_sub_agent_registry
+from artipivot.api.deps import (
+    get_config_center, get_plugin_manager, get_rate_limiter,
+    get_agent_registry, get_gateway, get_sub_agent_registry,
+    get_tool_reloader, get_storage_provider,
+)
 from artipivot.config.ratelimit import RateLimiter
 from artipivot.plugins.manager import PluginDocument, PluginManager
 
 admin_router = APIRouter()
+
+
+# ── Helpers ──
+
+
+async def _parse_yaml_or_json(request: Request) -> dict:
+    """Parse request body as YAML or JSON (auto-detect).
+
+    Supports Content-Type: application/json, application/x-yaml, text/yaml.
+    Falls back to YAML if content type is not JSON.
+    """
+    import yaml
+
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="Empty request body")
+
+    content_type = request.headers.get("content-type", "")
+
+    if "json" in content_type:
+        import json
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+
+    # Default: parse as YAML
+    try:
+        data = yaml.safe_load(body)
+    except yaml.YAMLError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}")
+
+    if data is None:
+        raise HTTPException(status_code=400, detail="Empty request body")
+    return data
 
 
 # ── DTOs ──
@@ -28,6 +67,25 @@ class RateLimitDTO(BaseModel):
     agent_id: str | None = None
     tool_name: str | None = None
     overrides: dict = {}
+
+
+class ToolDTO(BaseModel):
+    name: str
+    type: str = "builtin"
+    module: str | None = None
+    function: str | None = None
+    config: dict = {}
+    status: str = "active"
+
+
+class SubAgentDTO(BaseModel):
+    name: str
+    strategy: str = "react"
+    tools: list[str] = []
+    system_prompt: str = ""
+    strategy_config: dict = {}
+    graph: dict | None = None
+    status: str = "active"
 
 
 class UserModelDTO(BaseModel):
@@ -65,7 +123,9 @@ async def list_plugins(
 
 
 @admin_router.post("/plugins")
-async def publish_plugin(dto: PluginDTO):
+async def publish_plugin(request: Request):
+    body = await _parse_yaml_or_json(request)
+    dto = PluginDTO(**body)
     pm = get_plugin_manager()
     plugin = PluginDocument(
         plugin_type=dto.plugin_type,
@@ -249,8 +309,10 @@ class AgentRegisterDTO(BaseModel):
 
 
 @admin_router.post("/agents")
-async def register_agent(dto: AgentRegisterDTO):
-    """Dynamically register a new main agent at runtime."""
+async def register_agent(request: Request):
+    """Dynamically register a new main agent at runtime. Accepts YAML or JSON."""
+    body = await _parse_yaml_or_json(request)
+    dto = AgentRegisterDTO(**body)
     from artipivot.gateway.agent_def import AgentDef
 
     registry = get_agent_registry()
@@ -298,3 +360,152 @@ async def get_agent(agent_id: str):
     if agent_def is None:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
     return agent_def.to_dict()
+
+
+# ── Tools CRUD ──
+
+
+@admin_router.get("/tools")
+async def list_tools():
+    """List all registered tools (name, type, module, status)."""
+    from artipivot.api.deps import get_tool_registry
+    tools = get_tool_registry()
+    sp = get_storage_provider()
+    store = sp.document_store
+    records = await store.query("tools", {})
+    # Merge with in-memory registry to show stub status
+    result = []
+    seen = set()
+    for record in records:
+        name = record.get("name", "")
+        seen.add(name)
+        in_registry = tools.get(name) is not None
+        result.append({
+            "name": name,
+            "type": record.get("type", "builtin"),
+            "module": record.get("module"),
+            "function": record.get("function"),
+            "status": record.get("status", "active"),
+            "is_stub": not in_registry,
+        })
+    # Include tools in registry but not in store (builtins)
+    for name in tools.names:
+        if name not in seen:
+            result.append({
+                "name": name,
+                "type": "builtin",
+                "module": None,
+                "function": None,
+                "status": "active",
+                "is_stub": False,
+            })
+    return result
+
+
+@admin_router.post("/tools")
+async def create_tool(request: Request):
+    """Register or update a single tool record. Accepts YAML or JSON body.
+
+    YAML example:
+        name: baidu_search
+        type: module
+        module: my_pkg.tools.search
+        function: baidu_search
+
+    Writing triggers ChangeNotifier → ToolWatcher → ToolReloader → graph rebuild.
+    """
+    body = await _parse_yaml_or_json(request)
+    dto = ToolDTO(**body)
+
+    sp = get_storage_provider()
+    store = sp.document_store
+    notifier = sp.change_notifier
+
+    data = dto.model_dump()
+    await store.put("tools", dto.name, data)
+    await notifier.notify("tools", dto.name, "upsert", data)
+
+    return {"status": "registered", "name": dto.name}
+
+
+@admin_router.delete("/tools/{name}")
+async def delete_tool(name: str):
+    """Delete a tool record from DocumentStore."""
+    sp = get_storage_provider()
+    store = sp.document_store
+    notifier = sp.change_notifier
+
+    existing = await store.get("tools", name)
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
+
+    await store.delete("tools", name)
+    await notifier.notify("tools", name, "delete", {"name": name})
+
+    return {"status": "deleted", "name": name}
+
+
+# ── Sub-Agents CRUD ──
+
+
+@admin_router.get("/sub-agents")
+async def list_sub_agents():
+    """List all sub-agent records from DocumentStore."""
+    sp = get_storage_provider()
+    store = sp.document_store
+    records = await store.query("sub_agents", {})
+    return [
+        {
+            "name": r.get("name"),
+            "strategy": r.get("strategy", "react"),
+            "tools": r.get("tools", []),
+            "system_prompt": r.get("system_prompt", ""),
+            "status": r.get("status", "active"),
+        }
+        for r in records
+    ]
+
+
+@admin_router.post("/sub-agents")
+async def create_sub_agent(request: Request):
+    """Write a sub-agent record. Accepts YAML or JSON body.
+
+    YAML example:
+        name: code_writer
+        strategy: react
+        tools:
+          - web_search
+          - code_exec
+        system_prompt: You are a coding assistant.
+
+    Writing triggers ChangeNotifier — PluginWatcher rebuilds affected agents.
+    """
+    body = await _parse_yaml_or_json(request)
+    dto = SubAgentDTO(**body)
+
+    sp = get_storage_provider()
+    store = sp.document_store
+    notifier = sp.change_notifier
+
+    data = dto.model_dump()
+    await store.put("sub_agents", dto.name, data)
+    await notifier.notify("sub_agents", dto.name, "upsert", data)
+
+    return {"status": "registered", "name": dto.name}
+
+
+@admin_router.delete("/sub-agents/{name}")
+async def delete_sub_agent(name: str):
+    """Delete a sub-agent record from DocumentStore."""
+    sp = get_storage_provider()
+    store = sp.document_store
+    notifier = sp.change_notifier
+
+    existing = await store.get("sub_agents", name)
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"Sub-agent '{name}' not found")
+
+    await store.delete("sub_agents", name)
+    await notifier.notify("sub_agents", name, "delete", {"name": name})
+
+    return {"status": "deleted", "name": name}
