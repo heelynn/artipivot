@@ -113,9 +113,13 @@ async def bootstrap(
         memory_config = None  # All disabled → None (zero overhead)
 
     # ── 5. ModelProvider — populate from manifest ───────────────
+    from artipivot.resilience.circuit_breaker import CircuitRegistry
+
+    circuit_registry = CircuitRegistry()
     model_provider = ModelProvider(
         storage.document_store,
         storage.change_notifier,
+        circuit_registry=circuit_registry,
     )
     model_provider.load_from_manifest(manifest)
     await model_provider.start()

@@ -11,6 +11,15 @@ from artipivot.memory.config import MemoryConfig
 
 
 @dataclass
+class CircuitConfig:
+    """Per-agent circuit breaker configuration."""
+
+    enabled: bool = True
+    failure_threshold: int = 5           # 连续失败 N 次 → 熔断
+    recovery_timeout: float = 60.0       # 冷却时间（秒）
+
+
+@dataclass
 class AgentDef:
     """Complete agent definition — everything needed to build a main graph."""
 
@@ -51,6 +60,9 @@ class AgentDef:
     # Prompts
     prompts: dict[str, str] = field(default_factory=dict)
     # {"classify": "...", "respond": "...", "code_writer": "..."}
+
+    # Circuit breaker
+    circuit: CircuitConfig = field(default_factory=CircuitConfig)
 
     # Memory
     memory_config: MemoryConfig = field(default_factory=MemoryConfig)
@@ -145,6 +157,14 @@ class AgentDef:
             if n not in sub_agent_refs:
                 sub_agent_refs.append(n)
 
+        # Circuit breaker config
+        circuit_data = data.get("circuit", {})
+        circuit = CircuitConfig(
+            enabled=circuit_data.get("enabled", True),
+            failure_threshold=circuit_data.get("failure_threshold", 5),
+            recovery_timeout=circuit_data.get("recovery_timeout", 60.0),
+        )
+
         return cls(
             agent_id=data["agent_id"],
             model=data.get("model", {}),
@@ -157,6 +177,7 @@ class AgentDef:
             sub_agent_refs=sub_agent_refs,
             tools=data.get("tools", []),
             prompts=data.get("prompts", {}),
+            circuit=circuit,
             memory_config=MemoryConfig.from_dict(mem_data) if mem_data else MemoryConfig(),
         )
 
@@ -167,6 +188,11 @@ class AgentDef:
             "model": self.model,
             "confidence_threshold": self.confidence_threshold,
             "intent_map": self.intent_map,
+            "circuit": {
+                "enabled": self.circuit.enabled,
+                "failure_threshold": self.circuit.failure_threshold,
+                "recovery_timeout": self.circuit.recovery_timeout,
+            },
             "sub_agents": {
                 n: {"tools": s.tools, "system_prompt": s.system_prompt, "max_iterations": s.max_iterations}
                 for n, s in self.sub_agents.items()

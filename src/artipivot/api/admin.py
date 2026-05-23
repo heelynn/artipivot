@@ -509,3 +509,56 @@ async def delete_sub_agent(name: str):
     await notifier.notify("sub_agents", name, "delete", {"name": name})
 
     return {"status": "deleted", "name": name}
+
+
+# ── Circuit Breaker ──
+
+
+@admin_router.get("/agents/{agent_id}/circuit")
+async def get_circuit_status(agent_id: str):
+    """Get circuit breaker status for an agent's LLM providers."""
+    registry = get_agent_registry()
+    agent_def = registry.get_def(agent_id)
+    if agent_def is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+
+    from artipivot.models.provider import ModelProvider
+    # Read circuit state from the ModelProvider's circuit registry
+    # For now return the config — runtime state requires CircuitRegistry access
+    return {
+        "agent_id": agent_id,
+        "circuit": {
+            "enabled": agent_def.circuit.enabled,
+            "failure_threshold": agent_def.circuit.failure_threshold,
+            "recovery_timeout": agent_def.circuit.recovery_timeout,
+        },
+    }
+
+
+@admin_router.post("/agents/{agent_id}/circuit")
+async def update_circuit_config(agent_id: str, request: Request):
+    """Update circuit breaker config for an agent (hot-reload, no graph rebuild)."""
+    registry = get_agent_registry()
+    agent_def = registry.get_def(agent_id)
+    if agent_def is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+
+    body = await _parse_yaml_or_json(request)
+    if "enabled" in body:
+        agent_def.circuit.enabled = body["enabled"]
+    if "failure_threshold" in body:
+        agent_def.circuit.failure_threshold = body["failure_threshold"]
+    if "recovery_timeout" in body:
+        agent_def.circuit.recovery_timeout = body["recovery_timeout"]
+
+    # Push updated config to ModelProvider
+    from artipivot.api.deps import get_gateway
+    gw = get_gateway()
+    if gw and hasattr(gw._model_provider, "set_circuit_config"):
+        gw._model_provider.set_circuit_config(agent_id, agent_def.circuit)
+
+    return {"status": "updated", "agent_id": agent_id, "circuit": {
+        "enabled": agent_def.circuit.enabled,
+        "failure_threshold": agent_def.circuit.failure_threshold,
+        "recovery_timeout": agent_def.circuit.recovery_timeout,
+    }}

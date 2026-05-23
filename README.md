@@ -594,7 +594,7 @@ sequenceDiagram
 | 修改限流规则 | **否** | RateLimiter 即时生效 |
 | 注册新工具 | **是**（精准） | ToolWatcher → ToolReloader → 重建引用链上所有 agent |
 | 删除工具 | **是**（精准） | 同上，stub 替换 + 重建 |
-| 注册/修改公用 sub-agent | **是**（精准） | PluginWatcher → GraphRebuilder |
+| 熔断器配置 | **否** | circuit config 每次 LLM 调用即时读取 |
 
 ### 双状态架构
 
@@ -652,7 +652,22 @@ stateDiagram-v2
     }
 ```
 
-内置熔断器（closed → open → half_open）、重试策略（指数退避 + 抖动）、多维限流。详见 [resilience.md](doc/modules/resilience.md)。
+内置熔断器（closed → open → half_open）、重试策略（指数退避 + 抖动）、多维限流。
+
+**熔断器配置**（per-agent，YAML 业务配置）：
+
+```yaml
+agents:
+  code_agent:
+    circuit:
+      enabled: true               # 开关，默认 true
+      failure_threshold: 5        # 连续失败 N 次 → 熔断，默认 5
+      recovery_timeout: 60.0      # 冷却时间（秒），默认 60
+```
+
+熔断按 LLM provider（`deepseek`/`anthropic`/`openai`）独立工作，一个挂了不影响另一个。通过 Admin API 热修改即时生效，无需重建图。LLM 调用失败达阈值 → 电路 open → 不再徒劳发请求 → 冷却期满 → half_open 探测 → 成功闭合。
+
+详见 [resilience.md](doc/modules/resilience.md)。
 
 ---
 

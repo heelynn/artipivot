@@ -49,6 +49,11 @@ class AgentRegistry:
 
         self._gateway.register(agent_def.agent_id, graph)
         self._defs[agent_def.agent_id] = agent_def
+
+        # Pass circuit config to ModelProvider for LLM call protection
+        if self._model_provider is not None and hasattr(self._model_provider, "set_circuit_config"):
+            self._model_provider.set_circuit_config(agent_def.agent_id, agent_def.circuit)
+
         log.info(
             "registry.agent_registered",
             agent_id=agent_def.agent_id,

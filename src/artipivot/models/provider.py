@@ -113,24 +113,55 @@ def _make_patched_deepseek_cls():
 _PatchedChatDeepSeek = _make_patched_deepseek_cls()
 
 
+class _CircuitWrappedModel:
+    """Proxy that wraps model.ainvoke through a circuit breaker.
+
+    All other attribute access delegates to the underlying model.
+    """
+
+    def __init__(self, model: BaseChatModel, circuit) -> None:
+        self._model = model
+        self._circuit = circuit
+
+    def __getattr__(self, name: str):
+        if name in ("_model", "_circuit"):
+            raise AttributeError(name)
+        return getattr(self._model, name)
+
+    async def ainvoke(self, *args, **kwargs):
+        return await self._circuit.call(self._model.ainvoke, *args, **kwargs)
+
+
 class ModelProvider:
     """Model resolution + fallback chain + dynamic hot-reload."""
 
-    def __init__(self, store: DocumentStore, notifier: ChangeNotifier) -> None:
+    def __init__(
+        self,
+        store: DocumentStore,
+        notifier: ChangeNotifier,
+        *,
+        circuit_registry=None,
+    ) -> None:
         self._store = store
         self._notifier = notifier
         self._lock = threading.RLock()
+        self._circuit_registry = circuit_registry
 
         self._agent_models: dict[str, ModelConfig] = {}
         self._sub_models: dict[str, ModelConfig] = {}  # "agent_id:sub_name"
         self._user_models: dict[str, ModelConfig] = {}  # "agent_id:user_id"
         self._global_fallback: ModelConfig | None = None
+        self._circuit_configs: dict[str, object] = {}  # agent_id → CircuitConfig
 
         self._factories: dict[str, Callable[[ModelConfig], BaseChatModel]] = {
             "anthropic": _factory_anthropic,
             "openai": _factory_openai,
             "deepseek": _factory_deepseek,
         }
+
+    def set_circuit_config(self, agent_id: str, circuit_config) -> None:
+        """Set per-agent circuit breaker config (called by AgentRegistry)."""
+        self._circuit_configs[agent_id] = circuit_config
 
     def load_from_manifest(self, manifest) -> None:
         """Populate model configs directly from an AgentManifest (no DocumentStore).
@@ -149,6 +180,9 @@ class ModelProvider:
                     self._agent_models[agent_def.agent_id] = ModelConfig(
                         **agent_def.model
                     )
+
+                    # Store circuit config per agent
+                    self._circuit_configs[agent_def.agent_id] = agent_def.circuit
 
                     # Sub-agents inherit the main agent's model by default
                     for sub_name in agent_def.declarative_sub_agents:
@@ -298,13 +332,32 @@ class ModelProvider:
         for model_cfg in chain:
             try:
                 factory = self._factories[model_cfg.provider]
-                return factory(model_cfg)
+                model = factory(model_cfg)
+                return self._wrap_circuit(agent_id, model_cfg.provider, model)
             except Exception:
                 continue
 
         raise RuntimeError(
             f"All models unavailable: agent={agent_id}, sub={sub_name}"
         )
+
+    def _wrap_circuit(
+        self, agent_id: str, provider: str, model: BaseChatModel
+    ) -> BaseChatModel:
+        """Wrap a model with circuit breaker if enabled for the agent."""
+        if self._circuit_registry is None:
+            return model
+
+        circuit_cfg = self._circuit_configs.get(agent_id)
+        if circuit_cfg is None or not getattr(circuit_cfg, "enabled", True):
+            return model
+
+        cb = self._circuit_registry.get_or_create(
+            provider,
+            failure_threshold=getattr(circuit_cfg, "failure_threshold", 5),
+            recovery_timeout=getattr(circuit_cfg, "recovery_timeout", 60.0),
+        )
+        return _CircuitWrappedModel(model, cb)
 
     def _build_chain(self, cfg: ModelConfig) -> list[ModelConfig]:
         chain = [cfg]
