@@ -625,11 +625,7 @@ graph LR
 
 ### 可观测性
 
-`structlog` + `contextvars` 自动传播 `trace_id`。所有日志 JSON lines 格式，`grep "trace_id.*xxx"` 获取完整请求链路。
-
-**8 个日志通道**：`trace` · `session` · `llm` · `tool` · `memory` · `error` · `audit` · `main`
-
-`GraphLoggingCallback` 自动记录每个节点、LLM 调用、工具调用的完整生命周期——业务代码无需手动打日志。
+`structlog` + `contextvars` 自动传播 `trace_id`。所有日志 JSON lines 格式，`grep "trace_id.*xxx"` 获取完整请求链路。`GraphLoggingCallback` 自动记录每个节点、LLM 调用、工具调用的完整生命周期——业务代码无需手动打日志。
 
 双文件输出：`artipivot.log`（全量）+ `error.log`（仅 ERROR，用于告警）。可选 OpenTelemetry：`OTEL_ENABLED=true`。
 
