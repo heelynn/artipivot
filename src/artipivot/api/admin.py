@@ -240,15 +240,23 @@ async def get_ratelimits():
 
 @admin_router.put("/ratelimits/agent/{agent_id}")
 async def update_agent_ratelimit(agent_id: str, dto: RateLimitDTO):
-    rl = get_rate_limiter()
-    rl.config.agent_overrides[agent_id] = dto.overrides
+    """Update agent rate limit override. Write + notify, subscriber applies."""
+    sp = get_storage_provider()
+    key = f"agent:{agent_id}"
+    data = {"scope": "agent", "agent_id": agent_id, "overrides": dto.overrides}
+    await sp.document_store.put("ratelimit_configs", key, data)
+    await sp.change_notifier.notify("ratelimit_configs", key, "upsert", data)
     return {"status": "updated", "agent_id": agent_id}
 
 
 @admin_router.put("/ratelimits/tool/{tool_name}")
 async def update_tool_ratelimit(tool_name: str, dto: RateLimitDTO):
-    rl = get_rate_limiter()
-    rl.config.tool_overrides[tool_name] = dto.overrides
+    """Update tool rate limit override. Write + notify, subscriber applies."""
+    sp = get_storage_provider()
+    key = f"tool:{tool_name}"
+    data = {"scope": "tool", "tool_name": tool_name, "overrides": dto.overrides}
+    await sp.document_store.put("ratelimit_configs", key, data)
+    await sp.change_notifier.notify("ratelimit_configs", key, "upsert", data)
     return {"status": "updated", "tool_name": tool_name}
 
 
@@ -310,7 +318,10 @@ class AgentRegisterDTO(BaseModel):
 
 @admin_router.post("/agents")
 async def register_agent(request: Request):
-    """Register a new agent. Persists via ConfigService + registers in memory."""
+    """Register a new agent. Writes to DocumentStore + notifies subscribers.
+
+    All in-memory updates happen via subscriber callbacks, not direct mutation.
+    """
     body = await _parse_yaml_or_json(request)
     dto = AgentRegisterDTO(**body)
     from artipivot.gateway.agent_def import AgentDef
@@ -334,14 +345,42 @@ async def register_agent(request: Request):
         prompts=dto.prompts,
     )
 
+    # 1. Write routing_configs first — ConfigCenter subscribes to this
+    if intent_map:
+        sp = get_storage_provider()
+        routing_data = {
+            "agent_id": dto.agent_id,
+            "confidence_threshold": confidence_threshold,
+            "intent_map": intent_map,
+        }
+        await sp.document_store.put("routing_configs", dto.agent_id, routing_data)
+        await sp.change_notifier.notify("routing_configs", dto.agent_id, "upsert", routing_data)
+
+    # 2. Write prompt_configs if present
+    if dto.prompts:
+        sp = get_storage_provider()
+        for node_name, template in dto.prompts.items():
+            key = f"{dto.agent_id}:{node_name}"
+            prompt_data = {"_id": key, "agent_id": dto.agent_id, "node": node_name, "template": template}
+            await sp.document_store.put("prompt_configs", key, prompt_data)
+            await sp.change_notifier.notify("prompt_configs", key, "upsert", prompt_data)
+
+    # 3. Persist agent + notify (cs.save_agent calls notify internally)
     agent_data = agent_def.to_dict()
     await cs.save_agent(dto.agent_id, agent_data)
 
+    # 4. Register in-memory: subscriber _on_agent_change handles this.
+    #    With InProcessNotifier, it already ran synchronously inside notify().
+    #    With PollingChangeNotifier, trigger it explicitly so the agent is
+    #    available immediately in this process.
     registry = get_agent_registry()
-    try:
-        registry.register_def(agent_def)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    agent_rec = await cs.get_agent(dto.agent_id)
+    if agent_rec is not None:
+        try:
+            reloaded = AgentDef.from_dict(agent_rec)
+            registry.register_def(reloaded)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     return {"status": "registered", "agent_id": dto.agent_id}
 
@@ -407,73 +446,51 @@ async def update_agent(agent_id: str, dto: AgentUpdateDTO):
     if dto.memory is not None:
         updates["memory"] = dto.memory
 
-    # Update in-memory if registered
-    if agent_def is not None:
-        if dto.model is not None:
-            agent_def.model = dto.model
-        if dto.confidence_threshold is not None:
-            agent_def.confidence_threshold = dto.confidence_threshold
-        if dto.intent_map is not None:
-            agent_def.intent_map = dto.intent_map
-        if dto.prompts is not None:
-            agent_def.prompts = dto.prompts
-        if dto.tools is not None:
-            agent_def.tools = dto.tools
-        if dto.sub_agent_refs is not None:
-            agent_def.sub_agent_refs = dto.sub_agent_refs
-        if dto.circuit is not None:
-            c = dto.circuit
-            if "enabled" in c:
-                agent_def.circuit.enabled = c["enabled"]
-            if "failure_threshold" in c:
-                agent_def.circuit.failure_threshold = c["failure_threshold"]
-            if "recovery_timeout" in c:
-                agent_def.circuit.recovery_timeout = c["recovery_timeout"]
-        if dto.memory is not None:
-            from artipivot.memory.config import MemoryConfig
-            agent_def.memory_config = MemoryConfig.from_dict(dto.memory)
-
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
+    # Write routing_configs if intent_map changed (activates ConfigCenter subscription)
+    if dto.intent_map is not None:
+        sp = get_storage_provider()
+        routing_data = {
+            "agent_id": agent_id,
+            "confidence_threshold": dto.confidence_threshold or 0.7,
+            "intent_map": dto.intent_map,
+        }
+        await sp.document_store.put("routing_configs", agent_id, routing_data)
+        await sp.change_notifier.notify("routing_configs", agent_id, "upsert", routing_data)
+
+    # Write prompt_configs if prompts changed
+    if dto.prompts is not None:
+        sp = get_storage_provider()
+        for node_name, template in dto.prompts.items():
+            key = f"{agent_id}:{node_name}"
+            prompt_data = {"_id": key, "agent_id": agent_id, "node": node_name, "template": template}
+            await sp.document_store.put("prompt_configs", key, prompt_data)
+            await sp.change_notifier.notify("prompt_configs", key, "upsert", prompt_data)
+
+    # Persist + notify via ConfigService (subscriber _on_agent_change rebuilds)
     cs = get_config_service()
     try:
         updated = await cs.update_agent_fields(agent_id, updates)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-    if "tools" in updated and agent_def is not None:
-        try:
-            await registry.rebuild_agent(agent_id)
-        except Exception:
-            pass
-
-    # Memory changes (L2/L3) require graph rebuild because checkpointer/store
-    # are baked into the compiled graph at build time.
-    if "memory" in updated and agent_def is not None:
-        try:
-            await registry.rebuild_agent(agent_id)
-        except Exception:
-            pass
-
-    return {"status": "updated", "agent_id": agent_id, "fields": updated}
+    return {"status": "updated", "agent_id": agent_id, "fields": list(updated)}
 
 
 @admin_router.delete("/agents/{agent_id}")
 async def delete_agent(agent_id: str):
-    """Delete an agent from ConfigService and unregister from memory."""
+    """Delete an agent. ConfigService notifies subscribers for cluster sync."""
     cs = get_config_service()
     try:
         await cs.delete_agent(agent_id)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
+    # Remove from in-memory immediately (subscriber _on_agent_change also does this)
     registry = get_agent_registry()
-    try:
-        registry._defs.pop(agent_id, None)
-        registry._gateway._graphs.pop(agent_id, None)
-    except Exception:
-        pass
+    registry.remove_def(agent_id)
 
     return {"status": "deleted", "agent_id": agent_id}
 
@@ -605,22 +622,13 @@ async def get_circuit_status(agent_id: str):
 
 @admin_router.post("/agents/{agent_id}/circuit")
 async def update_circuit_config(agent_id: str, request: Request):
-    """Update circuit breaker config via ConfigService."""
+    """Update circuit breaker config. Write + notify, subscriber rebuilds."""
     body = await _parse_yaml_or_json(request)
     cs = get_config_service()
     try:
         await cs.update_agent_fields(agent_id, {"circuit": body})
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    registry = get_agent_registry()
-    agent_def = registry.get_def(agent_id)
-    if agent_def is not None:
-        if "enabled" in body:
-            agent_def.circuit.enabled = body["enabled"]
-        if "failure_threshold" in body:
-            agent_def.circuit.failure_threshold = body["failure_threshold"]
-        if "recovery_timeout" in body:
-            agent_def.circuit.recovery_timeout = body["recovery_timeout"]
     return {"status": "updated", "agent_id": agent_id, "circuit": body}
 
 

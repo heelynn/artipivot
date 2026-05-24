@@ -21,4 +21,7 @@ class PromptStore:
     async def apply(self, collection: str, key: str, action: str, data: dict) -> None:
         with self._lock:
             pk = data.get("_id", key)
-            self._prompts[pk] = data
+            if action == "delete":
+                self._prompts.pop(pk, None)
+            else:
+                self._prompts[pk] = data

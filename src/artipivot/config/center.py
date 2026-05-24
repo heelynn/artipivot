@@ -17,13 +17,14 @@ class ConfigCenter:
         notifier: ChangeNotifier,
         *,
         on_routing_change=None,
+        rate_limits=None,
     ) -> None:
         self._store = store
         self._notifier = notifier
         self._on_routing_change = on_routing_change
         self.prompts = PromptStore()
         self.routing = RoutingConfig()
-        self.rate_limits = RateLimiter()
+        self.rate_limits = rate_limits or RateLimiter()
 
     def load_from_manifest(self, manifest) -> None:
         """Populate routing + prompts directly from an AgentManifest (no DocumentStore).

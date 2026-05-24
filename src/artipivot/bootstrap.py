@@ -95,18 +95,19 @@ async def bootstrap(
 
     # ── 4. StorageProvider — 系统配置存储 ───────────
     storage_mode = os.environ.get("ARTIPIVOT_STORAGE_MODE", "memory")
-    storage_config = StorageConfig(mode=storage_mode)
-    storage = StorageProvider(storage_config)
+    storage_config = StorageConfig(mode=storage_mode, db_path=".artipivot/data.db")
+    storage = StorageProvider(storage_config, types=StorageProvider.CONFIG_TYPES)
     await storage.setup()
 
     _log.info("bootstrap.storage_ready", mode=storage_config.mode)
 
     # ── 4b. MemoryProvider — 记忆存储，独立策略 ───────────
     memory_backend = os.environ.get("ARTIPIVOT_MEMORY_BACKEND", "memory")
-    memory_storage = StorageProvider(StorageConfig(mode=memory_backend))
+    memory_db_path = os.environ.get("ARTIPIVOT_MEMORY_DB_PATH", ".artipivot/memory.db")
+    memory_storage = StorageProvider(StorageConfig(mode=memory_backend, db_path=memory_db_path), types=StorageProvider.MEMORY_TYPES)
     await memory_storage.setup()
 
-    _log.info("bootstrap.memory_storage_ready", backend=memory_backend)
+    _log.info("bootstrap.memory_storage_ready", backend=memory_backend, db_path=memory_db_path)
 
     # ── 4b. MemoryConfig from manifest ──
     memory_config = MemoryConfig.from_dict(manifest.memory) if manifest.memory else None
@@ -131,13 +132,16 @@ async def bootstrap(
     model_provider.load_from_manifest(manifest)
     await model_provider.start()
 
-    # ── 6. ConfigCenter — populate from manifest ────────────────
+    # ── 6. RateLimiter — shared instance (ConfigCenter + API) ──
+    rate_limiter = RateLimiter()
+
+    # ── 7. ConfigCenter — populate from manifest ────────────────
     config_center = ConfigCenter(
         storage.document_store,
         storage.change_notifier,
+        rate_limits=rate_limiter,
     )
     config_center.load_from_manifest(manifest)
-    await config_center.start()
 
     # ── 7. ToolRegistry — always from DocumentStore ────────────
     tool_registry = ToolRegistry()
@@ -174,6 +178,19 @@ async def bootstrap(
         model_provider=model_provider,
         sub_agent_registry=sub_agent_registry,
     )
+
+    # Wire on_routing_change callback after agent_registry is available
+    async def _on_routing_change(collection: str, key: str, action: str, data: dict) -> None:
+        agent_id = data.get("agent_id") or key
+        if not agent_id or agent_id not in agent_registry._defs:
+            return
+        try:
+            await agent_registry.rebuild_agent(agent_id, checkpointer=checkpointer, store=lg_store)
+        except Exception:
+            _log.error("routing_change.rebuild_failed", agent_id=agent_id, exc_info=True)
+
+    config_center._on_routing_change = _on_routing_change
+    await config_center.start()
 
     # ── 9a. Load agents from DocumentStore ────────────────────────
     agent_records = await storage.document_store.query("agents", {})
@@ -240,8 +257,14 @@ async def bootstrap(
         and triggers graph rebuild.
         """
         agent_id = data.get("agent_id") or key
-        if not agent_id or action == "delete":
+        if not agent_id:
             return
+
+        if action == "delete":
+            _log.info("config_watcher.agent_deleted", agent_id=agent_id)
+            agent_registry.remove_def(agent_id)
+            return
+
         _log.info("config_watcher.agent_changed", agent_id=agent_id)
 
         # Reload agent from DB — this is the source of truth including
@@ -287,8 +310,7 @@ async def bootstrap(
 
     config_service = ConfigService(storage.document_store, storage.change_notifier)
 
-    # ── 11. RateLimiter + PluginManager ─────────────────────────
-    rate_limiter = RateLimiter()
+    # ── 11. RateLimiter already created above (#6) ──────────────
     plugin_manager = PluginManager(
         store=storage.document_store,
         notifier=storage.change_notifier,

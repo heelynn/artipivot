@@ -17,7 +17,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog'
 import { Card } from '@/components/ui/card'
 import { useTranslation } from 'react-i18next'
@@ -62,11 +61,10 @@ function ToolsTab() {
   const { t } = useTranslation()
   const [tools, setTools] = useState<ToolInfo[]>([])
   const [loading, setLoading] = useState(true)
-  const [createOpen, setCreateOpen] = useState(false)
-  const [yamlInput, setYamlInput] = useState('')
   const [expandedTool, setExpandedTool] = useState<string | null>(null)
   const [editingTool, setEditingTool] = useState<ToolInfo | null>(null)
   const [editForm, setEditForm] = useState<Record<string, string>>({})
+  const [editMode, setEditMode] = useState<'add' | 'edit'>('edit')
 
   const load = async () => {
     try {
@@ -80,18 +78,6 @@ function ToolsTab() {
 
   useEffect(() => { load() }, [])
 
-  const handleCreate = async () => {
-    if (!yamlInput.trim()) return
-    try {
-      await api.createTool(yamlInput)
-      setCreateOpen(false)
-      setYamlInput('')
-      load()
-    } catch (err) {
-      console.error(err)
-    }
-  }
-
   const handleDelete = async (name: string) => {
     try {
       await api.deleteTool(name)
@@ -101,7 +87,14 @@ function ToolsTab() {
     }
   }
 
+  const startAdd = () => {
+    setEditMode('add')
+    setEditingTool({ name: '' })
+    setEditForm({ type: 'builtin', module: '', function: '', config: '{}' })
+  }
+
   const startEdit = (tool: ToolInfo) => {
+    setEditMode('edit')
     setEditingTool(tool)
     setEditForm({
       type: tool.type || 'builtin',
@@ -113,10 +106,12 @@ function ToolsTab() {
 
   const handleSave = async () => {
     if (!editingTool) return
+    const name = editMode === 'add' ? (editForm.name || '').trim() : editingTool.name
+    if (!name) return
     try {
       let config = {}
       try { config = JSON.parse(editForm.config || '{}') } catch { /* keep as string */ }
-      await api.updateTool(editingTool.name, {
+      await api.updateTool(name, {
         type: editForm.type,
         module: editForm.module,
         function: editForm.function,
@@ -133,24 +128,7 @@ function ToolsTab() {
   return (
     <>
       <div className="flex justify-end mb-3">
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger asChild>
-            <Button size="sm"><Plus size={14} className="mr-1" /> {t('config.tools.addTool')}</Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader><DialogTitle>{t('config.tools.addToolTitle')}</DialogTitle></DialogHeader>
-            <textarea
-              value={yamlInput}
-              onChange={e => setYamlInput(e.target.value)}
-              placeholder={t('config.tools.yamlPlaceholder')}
-              className="w-full h-64 rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
-            />
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setCreateOpen(false)}>{t('config.tools.cancel')}</Button>
-              <Button onClick={handleCreate}>{t('config.tools.create')}</Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+        <Button size="sm" onClick={startAdd}><Plus size={14} className="mr-1" /> {t('config.tools.addTool')}</Button>
       </div>
 
       {loading ? (
@@ -231,9 +209,18 @@ function ToolsTab() {
       <Dialog open={editingTool != null} onOpenChange={(open) => { if (!open) setEditingTool(null) }}>
         <DialogContent className="max-w-xl">
           <DialogHeader>
-            <DialogTitle>{t('config.tools.editTitle', { name: editingTool?.name })}</DialogTitle>
+            <DialogTitle>
+              {editMode === 'add' ? t('config.tools.addToolTitle') : t('config.tools.editTitle', { name: editingTool?.name })}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
+            {editMode === 'add' && (
+              <div>
+                <label className="text-sm font-medium">{t('config.tools.name')}</label>
+                <Input value={editForm.name || ''} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+                  className="mt-1 font-mono text-sm" placeholder="my_tool" />
+              </div>
+            )}
             <div>
               <label className="text-sm font-medium">{t('config.tools.typeLabel')}</label>
               <Input value={editForm.type || ''} onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))}
@@ -276,11 +263,10 @@ function SubAgentsTab() {
   const { t } = useTranslation()
   const [subAgents, setSubAgents] = useState<SubAgentInfo[]>([])
   const [loading, setLoading] = useState(true)
-  const [createOpen, setCreateOpen] = useState(false)
-  const [yamlInput, setYamlInput] = useState('')
   const [expandedSA, setExpandedSA] = useState<string | null>(null)
   const [editingSA, setEditingSA] = useState<SubAgentInfo | null>(null)
   const [editForm, setEditForm] = useState<Record<string, string>>({})
+  const [saMode, setSaMode] = useState<'add' | 'edit'>('edit')
 
   const load = async () => {
     try {
@@ -294,18 +280,6 @@ function SubAgentsTab() {
 
   useEffect(() => { load() }, [])
 
-  const handleCreate = async () => {
-    if (!yamlInput.trim()) return
-    try {
-      await api.createSubAgent(yamlInput)
-      setCreateOpen(false)
-      setYamlInput('')
-      load()
-    } catch (err) {
-      console.error(err)
-    }
-  }
-
   const handleDelete = async (name: string) => {
     try {
       await api.deleteSubAgent(name)
@@ -315,7 +289,14 @@ function SubAgentsTab() {
     }
   }
 
+  const startAdd = () => {
+    setSaMode('add')
+    setEditingSA({ name: '' })
+    setEditForm({ strategy: 'react', system_prompt: '', tools: '', strategy_config: '{}' })
+  }
+
   const startEdit = (sa: SubAgentInfo) => {
+    setSaMode('edit')
     setEditingSA(sa)
     setEditForm({
       strategy: sa.strategy || 'react',
@@ -327,11 +308,13 @@ function SubAgentsTab() {
 
   const handleSave = async () => {
     if (!editingSA) return
+    const name = saMode === 'add' ? (editForm.name || '').trim() : editingSA.name
+    if (!name) return
     try {
       let strategyConfig = {}
       try { strategyConfig = JSON.parse(editForm.strategy_config || '{}') } catch { /* keep as string */ }
       const tools = (editForm.tools || '').split(',').map(t => t.trim()).filter(Boolean)
-      await api.updateSubAgent(editingSA.name, {
+      await api.updateSubAgent(name, {
         strategy: editForm.strategy,
         tools,
         system_prompt: editForm.system_prompt,
@@ -348,24 +331,7 @@ function SubAgentsTab() {
   return (
     <>
       <div className="flex justify-end mb-3">
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger asChild>
-            <Button size="sm"><Plus size={14} className="mr-1" /> {t('config.subAgents.addSubAgent')}</Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader><DialogTitle>{t('config.subAgents.addSubAgentTitle')}</DialogTitle></DialogHeader>
-            <textarea
-              value={yamlInput}
-              onChange={e => setYamlInput(e.target.value)}
-              placeholder={t('config.subAgents.yamlPlaceholder')}
-              className="w-full h-64 rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
-            />
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setCreateOpen(false)}>{t('config.subAgents.cancel')}</Button>
-              <Button onClick={handleCreate}>{t('config.subAgents.create')}</Button>
-            </div>
-          </DialogContent>
-        </Dialog>
+        <Button size="sm" onClick={startAdd}><Plus size={14} className="mr-1" /> {t('config.subAgents.addSubAgent')}</Button>
       </div>
 
       {loading ? (
@@ -477,9 +443,18 @@ function SubAgentsTab() {
       <Dialog open={editingSA != null} onOpenChange={(open) => { if (!open) setEditingSA(null) }}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{t('config.subAgents.editTitle', { name: editingSA?.name })}</DialogTitle>
+            <DialogTitle>
+              {saMode === 'add' ? t('config.subAgents.addSubAgentTitle') : t('config.subAgents.editTitle', { name: editingSA?.name })}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
+            {saMode === 'add' && (
+              <div>
+                <label className="text-sm font-medium">{t('config.subAgents.name')}</label>
+                <Input value={editForm.name || ''} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+                  className="mt-1 font-mono text-sm" placeholder="my_sub_agent" />
+              </div>
+            )}
             <div>
               <label className="text-sm font-medium">{t('config.subAgents.strategyLabel')}</label>
               <select

@@ -151,6 +151,12 @@ export const api = {
       headers: { 'Content-Type': 'application/yaml', 'Accept': 'application/json' },
     })
   },
+  registerAgentJson(data: Record<string, unknown>) {
+    return request<AgentInfo>('/api/v1/admin/agents', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  },
   updateAgent(agentId: string, data: Record<string, unknown>) {
     return request<{ status: string; agent_id: string; fields: string[] }>(
       `/api/v1/admin/agents/${agentId}`,

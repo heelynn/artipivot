@@ -214,7 +214,27 @@ class ModelProvider:
         self, collection: str, key: str, action: str, data: dict
     ) -> None:
         with self._lock:
-            self._apply_doc(data)
+            if action == "delete":
+                self._remove_doc(data)
+            else:
+                self._apply_doc(data)
+
+    def _remove_doc(self, doc: dict) -> None:
+        match doc.get("scope"):
+            case "agent":
+                agent_id = doc.get("agent_id")
+                if agent_id:
+                    self._agent_models.pop(agent_id, None)
+            case "sub_agent":
+                aid = doc.get("agent_id")
+                sn = doc.get("sub_agent")
+                if aid and sn:
+                    self._sub_models.pop(f"{aid}:{sn}", None)
+            case "user":
+                aid = doc.get("agent_id")
+                uid = doc.get("user_id")
+                if aid and uid:
+                    self._user_models.pop(f"{aid}:{uid}", None)
 
     def _apply_doc(self, doc: dict) -> None:
         match doc.get("scope"):
@@ -224,69 +244,70 @@ class ModelProvider:
                     self._global_fallback = ModelConfig(**fb)
             case "agent":
                 model = doc.get("model")
-                if model:
-                    agent_id = doc["agent_id"]
+                agent_id = doc.get("agent_id")
+                if model and agent_id:
                     self._agent_models[agent_id] = ModelConfig(**model)
             case "sub_agent":
                 model = doc.get("model")
-                if model:
-                    key = f"{doc['agent_id']}:{doc['sub_agent']}"
-                    self._sub_models[key] = ModelConfig(**model)
+                aid = doc.get("agent_id")
+                sn = doc.get("sub_agent")
+                if model and aid and sn:
+                    self._sub_models[f"{aid}:{sn}"] = ModelConfig(**model)
             case "user":
                 model = doc.get("model")
-                if model:
-                    key = f"{doc['agent_id']}:{doc['user_id']}"
-                    self._user_models[key] = ModelConfig(**model)
+                aid = doc.get("agent_id")
+                uid = doc.get("user_id")
+                if model and aid and uid:
+                    self._user_models[f"{aid}:{uid}"] = ModelConfig(**model)
 
     # ── Management API ──
 
     async def update_agent_model(self, agent_id: str, model: dict) -> None:
+        key = f"agent:{agent_id}"
         doc = {"scope": "agent", "agent_id": agent_id, "model": model}
-        await self._store.put("model_configs", f"agent:{agent_id}", doc)
-        with self._lock:
-            self._apply_doc(doc)
+        await self._store.put("model_configs", key, doc)
+        await self._notifier.notify("model_configs", key, "upsert", doc)
 
     async def update_sub_model(
         self, agent_id: str, sub_name: str, model: dict
     ) -> None:
+        key = f"sub_agent:{agent_id}:{sub_name}"
         doc = {
             "scope": "sub_agent",
             "agent_id": agent_id,
             "sub_agent": sub_name,
             "model": model,
         }
-        await self._store.put(
-            "model_configs", f"sub_agent:{agent_id}:{sub_name}", doc
-        )
-        with self._lock:
-            self._apply_doc(doc)
+        await self._store.put("model_configs", key, doc)
+        await self._notifier.notify("model_configs", key, "upsert", doc)
 
     async def update_user_model(
         self, user_id: str, model: dict, agent_id: str | None = None
     ) -> None:
         """Set user-level model config. agent_id=None means user global."""
         effective_agent = agent_id or "__global__"
+        key = f"user:{effective_agent}:{user_id}"
         doc = {
             "scope": "user",
             "agent_id": effective_agent,
             "user_id": user_id,
             "model": model,
         }
-        await self._store.put(
-            "model_configs", f"user:{effective_agent}:{user_id}", doc
-        )
-        with self._lock:
-            self._apply_doc(doc)
+        await self._store.put("model_configs", key, doc)
+        await self._notifier.notify("model_configs", key, "upsert", doc)
 
     async def delete_user_model(
         self, user_id: str, agent_id: str | None = None
     ) -> None:
-        """Remove user-level model config."""
+        """Remove user-level model config. Notify subscriber to clear cache."""
         effective_agent = agent_id or "__global__"
         key = f"user:{effective_agent}:{user_id}"
-        with self._lock:
-            self._user_models.pop(f"{effective_agent}:{user_id}", None)
         await self._store.delete("model_configs", key)
+        await self._notifier.notify("model_configs", key, "delete", {
+            "scope": "user",
+            "agent_id": effective_agent,
+            "user_id": user_id,
+        })
 
     def get_user_model_config(
         self, user_id: str, agent_id: str | None = None

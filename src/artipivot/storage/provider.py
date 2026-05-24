@@ -39,10 +39,25 @@ class StorageProvider:
         await provider.setup()
         checkpointer = provider.checkpointer
         store = provider.store
+
+    Attributes:
+        types: Tuple of TYPE_* constants this provider should manage.
+               Defaults to all four. Config providers typically only need
+               DOCUMENT_STORE + CHANGE_NOTIFIER; memory providers only
+               need CHECKPOINTER + STORE.
     """
 
-    def __init__(self, config: StorageConfig) -> None:
+    CONFIG_TYPES = (TYPE_DOCUMENT_STORE, TYPE_CHANGE_NOTIFIER)
+    MEMORY_TYPES = (TYPE_CHECKPOINTER, TYPE_STORE)
+    ALL_TYPES = (TYPE_CHECKPOINTER, TYPE_STORE, TYPE_DOCUMENT_STORE, TYPE_CHANGE_NOTIFIER)
+
+    def __init__(
+        self,
+        config: StorageConfig,
+        types: tuple[str, ...] | None = None,
+    ) -> None:
         self._config = config
+        self._types = types or self.ALL_TYPES
         self._backends: dict[str, Any] = {}
 
     # ── Public API ──
@@ -57,12 +72,7 @@ class StorageProvider:
 
         Safe to call multiple times — skips already-initialized backends.
         """
-        for type_key in (
-            TYPE_CHECKPOINTER,
-            TYPE_STORE,
-            TYPE_DOCUMENT_STORE,
-            TYPE_CHANGE_NOTIFIER,
-        ):
+        for type_key in self._types:
             backend = self._get_or_create(type_key)
             if backend is None:
                 continue
@@ -81,12 +91,7 @@ class StorageProvider:
     async def health_check(self) -> dict[str, str]:
         """Return health status for each backend type."""
         result: dict[str, str] = {}
-        for type_key in (
-            TYPE_CHECKPOINTER,
-            TYPE_STORE,
-            TYPE_DOCUMENT_STORE,
-            TYPE_CHANGE_NOTIFIER,
-        ):
+        for type_key in self._types:
             try:
                 backend = self._get_or_create(type_key)
                 if backend is None:

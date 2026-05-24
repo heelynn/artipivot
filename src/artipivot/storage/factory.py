@@ -136,6 +136,7 @@ class SqliteFactory(BackendFactory):
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(db_path, check_same_thread=False)
             conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
             return SqliteSaver(conn)
 
         if type == TYPE_STORE:

@@ -61,6 +61,12 @@ class AgentRegistry:
             sub_agents=list(sub_agent_nodes.keys()),
         )
 
+    def remove_def(self, agent_id: str) -> None:
+        """Remove an agent from the registry and gateway."""
+        self._defs.pop(agent_id, None)
+        self._gateway.unregister(agent_id)
+        log.info("registry.agent_removed", agent_id=agent_id)
+
     def get_def(self, agent_id: str) -> AgentDef | None:
         """Get AgentDef by agent_id."""
         return self._defs.get(agent_id)

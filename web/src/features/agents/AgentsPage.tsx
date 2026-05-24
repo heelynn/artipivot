@@ -8,7 +8,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog'
 import {
   Table,
@@ -39,12 +38,11 @@ export function AgentsPage() {
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null)
   const [circuitMap, setCircuitMap] = useState<Record<string, CircuitStatus>>({})
-  const [registerOpen, setRegisterOpen] = useState(false)
-  const [yamlInput, setYamlInput] = useState('')
   const [loading, setLoading] = useState(true)
 
-  // Edit state
-  const [editingAgent, setEditingAgent] = useState<string | null>(null)
+  // Unified dialog state (add + edit)
+  const [dialogMode, setDialogMode] = useState<'add' | 'edit' | null>(null)
+  const [dialogAgentId, setDialogAgentId] = useState('')
   const [editTab, setEditTab] = useState('model')
   const [editForm, setEditForm] = useState<Record<string, unknown>>({})
   const [saving, setSaving] = useState(false)
@@ -73,20 +71,25 @@ export function AgentsPage() {
 
   useEffect(() => { loadAgents() }, [])
 
-  const handleRegister = async () => {
-    if (!yamlInput.trim()) return
-    try {
-      await api.registerAgent(yamlInput)
-      setRegisterOpen(false)
-      setYamlInput('')
-      loadAgents()
-    } catch (err) {
-      console.error('Failed to register agent:', err)
-    }
+  const openAdd = () => {
+    setDialogMode('add')
+    setDialogAgentId('')
+    setEditTab('model')
+    setEditForm({
+      agent_id: '',
+      provider: '',
+      name: '',
+      api_key: '',
+      base_url: '',
+      temperature: '',
+      timeout: '',
+      max_tokens: '',
+    })
   }
 
   const openEdit = (agent: AgentInfo, tab: string) => {
-    setEditingAgent(agent.agent_id)
+    setDialogMode('edit')
+    setDialogAgentId(agent.agent_id)
     setEditTab(tab)
     if (tab === 'model') {
       setEditForm({ ...(typeof agent.model === 'object' ? agent.model as Record<string, unknown> : {}) })
@@ -142,14 +145,13 @@ export function AgentsPage() {
   }
 
   const handleSave = async () => {
-    if (!editingAgent) return
+    if (!dialogMode) return
     setSaving(true)
     try {
       let payload: Record<string, unknown>
       if (editTab === 'routing') {
         const intentMap = editForm.intent_map as Record<string, string>
         const descs = editForm.intent_descriptions as Record<string, string> ?? {}
-        // Send descriptions via the intent_map values as rich dicts
         const richIntents: Record<string, { target: string; description?: string }> = {}
         for (const [k, v] of Object.entries(intentMap)) {
           richIntents[k] = { target: v }
@@ -164,7 +166,6 @@ export function AgentsPage() {
       } else if (editTab === 'prompts') {
         payload = { prompts: editForm.prompts }
       } else if (editTab === 'sub-agents') {
-        // Flatten: public refs → string, private refs → dict
         const refs = ((editForm.sub_agent_refs as unknown[]) ?? []).map((ref: unknown) => {
           const r = ref as Record<string, unknown>
           if (r.public) return r.name as string
@@ -176,8 +177,15 @@ export function AgentsPage() {
       } else {
         payload = editForm
       }
-      await api.updateAgent(editingAgent, payload)
-      setEditingAgent(null)
+
+      if (dialogMode === 'add') {
+        const agentId = (editForm.agent_id as string) || dialogAgentId
+        if (!agentId) return
+        await api.registerAgentJson({ agent_id: agentId, ...payload })
+      } else {
+        await api.updateAgent(dialogAgentId, payload)
+      }
+      setDialogMode(null)
       loadAgents()
     } catch (err) {
       console.error('Failed to save:', err)
@@ -186,7 +194,7 @@ export function AgentsPage() {
     }
   }
 
-  const agent = agents.find(a => a.agent_id === editingAgent)
+  const agent = agents.find(a => a.agent_id === dialogAgentId)
 
   return (
     <div className="h-full overflow-y-auto p-6">
@@ -196,24 +204,7 @@ export function AgentsPage() {
             <h1 className="text-2xl font-semibold">{t('agents.title')}</h1>
             <p className="text-sm text-muted-foreground mt-1">{t('agents.subtitle')}</p>
           </div>
-          <Dialog open={registerOpen} onOpenChange={setRegisterOpen}>
-            <DialogTrigger asChild>
-              <Button><Plus size={16} className="mr-1" /> {t('agents.register')}</Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl">
-              <DialogHeader><DialogTitle>{t('agents.register')}</DialogTitle></DialogHeader>
-              <textarea
-                value={yamlInput}
-                onChange={e => setYamlInput(e.target.value)}
-                placeholder={t('agents.registerYamlPlaceholder')}
-                className="w-full h-64 rounded-md border border-input bg-background px-3 py-2 text-sm font-mono resize-none"
-              />
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setRegisterOpen(false)}>{t('agents.cancel')}</Button>
-                <Button onClick={handleRegister}>{t('agents.registerAction')}</Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+          <Button onClick={openAdd}><Plus size={16} className="mr-1" /> {t('agents.register')}</Button>
         </div>
 
         {loading ? (
@@ -391,13 +382,26 @@ export function AgentsPage() {
         )}
 
         {/* Edit Dialog */}
-        <Dialog open={editingAgent != null} onOpenChange={(open) => { if (!open) setEditingAgent(null) }}>
+        <Dialog open={dialogMode != null} onOpenChange={(open) => { if (!open) setDialogMode(null) }}>
           <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>{t('agents.editTitle', { agent: editingAgent })}</DialogTitle>
+              <DialogTitle>
+                {dialogMode === 'add' ? t('agents.register') : t('agents.editTitle', { agent: dialogAgentId })}
+              </DialogTitle>
             </DialogHeader>
+            {dialogMode === 'add' && (
+              <div className="mb-3">
+                <label className="text-sm font-medium">Agent ID</label>
+                <Input
+                  value={editForm.agent_id as string ?? ''}
+                  onChange={e => setEditForm(f => ({ ...f, agent_id: e.target.value }))}
+                  className="mt-1 font-mono text-sm"
+                  placeholder="my_agent"
+                />
+              </div>
+            )}
             <Tabs value={editTab} onValueChange={tab => {
-              if (agent) openEdit(agent, tab)
+              if (dialogMode === 'edit' && agent) openEdit(agent, tab)
             }}>
               <TabsList>
                 <TabsTrigger value="model">{t('agents.model.tab')}</TabsTrigger>
@@ -844,9 +848,9 @@ export function AgentsPage() {
               </TabsContent>
             </Tabs>
             <div className="flex justify-end gap-2 mt-4">
-              <Button variant="outline" onClick={() => setEditingAgent(null)}>{t('agents.cancel')}</Button>
+              <Button variant="outline" onClick={() => setDialogMode(null)}>{t('agents.cancel')}</Button>
               <Button onClick={handleSave} disabled={saving}>
-                {saving ? t('agents.saving') : t('agents.saveChanges')}
+                {saving ? t('agents.saving') : dialogMode === 'add' ? t('agents.registerAction') : t('agents.saveChanges')}
               </Button>
             </div>
           </DialogContent>

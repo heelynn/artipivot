@@ -125,17 +125,22 @@ class RateLimiter:
         """ChangeNotifier callback — update rate limit config dynamically."""
         scope = data.get("scope", "")
 
+        if action == "delete":
+            if scope == "agent":
+                agent_id = data.get("agent_id", key)
+                self._config.agent_overrides.pop(agent_id, None)
+            elif scope == "tool":
+                tool_name = data.get("tool_name", key)
+                self._config.tool_overrides.pop(tool_name, None)
+            return
+
         if scope == "global":
-            self._config.defaults.update(data.get("overrides", data))
+            self._config.defaults.update(data.get("overrides", {}))
         elif scope == "agent":
             agent_id = data.get("agent_id", key)
-            self._config.agent_overrides[agent_id] = data.get(
-                "overrides", data
-            )
+            self._config.agent_overrides[agent_id] = data.get("overrides", {})
         elif scope == "tool":
             tool_name = data.get("tool_name", key)
-            self._config.tool_overrides[tool_name] = data.get(
-                "overrides", data
-            )
+            self._config.tool_overrides[tool_name] = data.get("overrides", {})
 
         logger.info("ratelimit.config_updated", scope=scope, key=key)

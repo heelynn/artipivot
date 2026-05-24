@@ -48,6 +48,11 @@ class AgentGateway:
         """Register a compiled graph for an agent."""
         self._graphs[agent_id] = graph
 
+    def unregister(self, agent_id: str) -> None:
+        """Remove an agent's graph from the gateway."""
+        self._graphs.pop(agent_id, None)
+        self._rebuild_locks.pop(agent_id, None)
+
     def list_agent_ids(self) -> list[str]:
         """Return all registered agent IDs."""
         return list(self._graphs.keys())

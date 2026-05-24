@@ -58,3 +58,4 @@ web/dist/
 .claude/
 
 .playwright-mcp/
+**/logs/*
