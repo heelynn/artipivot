@@ -114,8 +114,8 @@ class MemoryFactory(BackendFactory):
 class SqliteFactory(BackendFactory):
     """SQLite backend — local file persistence.
 
-    Creates SQLite-backed DocumentStore with polling change notifier.
-    Checkpointer and Store remain in-memory (LangGraph built-in).
+    Creates SQLite-backed checkpointer, store, DocumentStore, and polling
+    change notifier.
     """
 
     @property
@@ -129,12 +129,24 @@ class SqliteFactory(BackendFactory):
         self._check_supports(type)
 
         if type == TYPE_CHECKPOINTER:
-            from langgraph.checkpoint.memory import InMemorySaver
-            return InMemorySaver()
+            import sqlite3
+            from pathlib import Path
+            from langgraph.checkpoint.sqlite import SqliteSaver
+            db_path = config.get("db_path", ".artipivot/data.db")
+            Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(db_path, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL")
+            return SqliteSaver(conn)
 
         if type == TYPE_STORE:
-            from langgraph.store.memory import InMemoryStore
-            return InMemoryStore()
+            import sqlite3
+            from pathlib import Path
+            from langgraph.store.sqlite import SqliteStore
+            db_path = config.get("db_path", ".artipivot/data.db")
+            Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(db_path, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL")
+            return SqliteStore(conn)
 
         if type == TYPE_DOCUMENT_STORE:
             from artipivot.storage.sqlite import SQLiteDocumentStore

@@ -234,6 +234,7 @@ class AgentDef:
         for n, g in self.graph_sub_agents.items():
             sub_agents[n] = {"graph": g.to_dict()}
 
+        mc = self.memory_config
         return {
             "agent_id": self.agent_id,
             "model": self.model,
@@ -249,6 +250,26 @@ class AgentDef:
                 "enabled": self.circuit.enabled,
                 "failure_threshold": self.circuit.failure_threshold,
                 "recovery_timeout": self.circuit.recovery_timeout,
+            },
+            "memory": {
+                "l2": mc.l2,
+                "l3": mc.l3,
+                "embedding": {"enabled": mc.embedding.enabled},
+                "context_window": {
+                    "enabled": mc.context_window.enabled,
+                    "strategy": mc.context_window.strategy,
+                    "trigger_tokens": mc.context_window.trigger_tokens,
+                    "keep_messages": mc.context_window.keep_messages,
+                },
+                "extraction": {
+                    "enabled": mc.extraction.enabled,
+                    "max_messages": mc.extraction.max_messages,
+                    "write_on": mc.extraction.write_on,
+                },
+                "retention": {
+                    "knowledge_ttl_days": mc.retention.knowledge_ttl_days,
+                    "max_items_per_namespace": mc.retention.max_items_per_namespace,
+                },
             },
             # Flat fields for frontend backward compat
             "confidence_threshold": self.confidence_threshold,

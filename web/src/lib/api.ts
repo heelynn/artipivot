@@ -1,5 +1,26 @@
 const API_BASE = import.meta.env.PROD ? '' : ''
 
+export interface MemoryConfig {
+  l2?: boolean
+  l3?: boolean
+  embedding?: { enabled?: boolean }
+  context_window?: {
+    enabled?: boolean
+    strategy?: string
+    trigger_tokens?: number
+    keep_messages?: number
+  }
+  extraction?: {
+    enabled?: boolean
+    max_messages?: number
+    write_on?: string
+  }
+  retention?: {
+    knowledge_ttl_days?: number | null
+    max_items_per_namespace?: number | null
+  }
+}
+
 export interface AgentInfo {
   agent_id: string
   model?: Record<string, unknown>
@@ -12,6 +33,7 @@ export interface AgentInfo {
   prompts?: Record<string, string>
   declarative_sub_agents?: Record<string, unknown>
   graph_sub_agents?: Record<string, unknown>
+  memory?: MemoryConfig
 }
 
 export interface ChatRequest {
@@ -106,12 +128,12 @@ export const api = {
 
   // Agents
   async listAgents(): Promise<AgentInfo[]> {
-    const data = await request<{ agents: string[] }>('/admin/agents')
+    const data = await request<{ agents: string[] }>('/api/v1/admin/agents')
     const ids = data.agents ?? []
     const details = await Promise.all(
       ids.map(async id => {
         try {
-          return await request<AgentInfo>(`/admin/agents/${id}`)
+          return await request<AgentInfo>(`/api/v1/admin/agents/${id}`)
         } catch {
           return { agent_id: id } as AgentInfo
         }
@@ -120,10 +142,10 @@ export const api = {
     return details
   },
   getAgent(agentId: string) {
-    return request<AgentInfo>(`/admin/agents/${agentId}`)
+    return request<AgentInfo>(`/api/v1/admin/agents/${agentId}`)
   },
   registerAgent(yaml: string) {
-    return request<AgentInfo>('/admin/agents', {
+    return request<AgentInfo>('/api/v1/admin/agents', {
       method: 'POST',
       body: yaml,
       headers: { 'Content-Type': 'application/yaml', 'Accept': 'application/json' },
@@ -131,44 +153,44 @@ export const api = {
   },
   updateAgent(agentId: string, data: Record<string, unknown>) {
     return request<{ status: string; agent_id: string; fields: string[] }>(
-      `/admin/agents/${agentId}`,
+      `/api/v1/admin/agents/${agentId}`,
       { method: 'PUT', body: JSON.stringify(data) }
     )
   },
   deleteAgent(agentId: string) {
-    return request<void>(`/admin/agents/${agentId}`, { method: 'DELETE' })
+    return request<void>(`/api/v1/admin/agents/${agentId}`, { method: 'DELETE' })
   },
   getCircuitStatus(agentId: string) {
-    return request<CircuitStatus>(`/admin/agents/${agentId}/circuit`)
+    return request<CircuitStatus>(`/api/v1/admin/agents/${agentId}/circuit`)
   },
 
   // Models
   getModel(agentId: string) {
-    return request<ModelConfig>(`/admin/models/${agentId}`)
+    return request<ModelConfig>(`/api/v1/admin/models/${agentId}`)
   },
   setUserModel(userId: string, agentId: string, config: ModelConfig) {
-    return request<void>(`/admin/models/user/${userId}/agent/${agentId}`, {
+    return request<void>(`/api/v1/admin/models/user/${userId}/agent/${agentId}`, {
       method: 'PUT',
       body: JSON.stringify(config),
     })
   },
   deleteUserModel(userId: string, agentId: string) {
-    return request<void>(`/admin/models/user/${userId}/agent/${agentId}`, {
+    return request<void>(`/api/v1/admin/models/user/${userId}/agent/${agentId}`, {
       method: 'DELETE',
     })
   },
 
   // Routing
   getRouting(agentId: string) {
-    return request<RoutingConfig>(`/admin/routing/${agentId}`)
+    return request<RoutingConfig>(`/api/v1/admin/routing/${agentId}`)
   },
 
   // Rate limits
   getRateLimits() {
-    return request<RateLimitConfig>('/admin/ratelimits')
+    return request<RateLimitConfig>('/api/v1/admin/ratelimits')
   },
   updateAgentRateLimit(agentId: string, config: Record<string, unknown>) {
-    return request<void>(`/admin/ratelimits/agent/${agentId}`, {
+    return request<void>(`/api/v1/admin/ratelimits/agent/${agentId}`, {
       method: 'PUT',
       body: JSON.stringify(config),
     })
@@ -176,20 +198,20 @@ export const api = {
 
   // Tools
   listTools() {
-    return request<ToolInfo[]>('/admin/tools')
+    return request<ToolInfo[]>('/api/v1/admin/tools')
   },
   createTool(yaml: string) {
-    return request<ToolInfo>('/admin/tools', {
+    return request<ToolInfo>('/api/v1/admin/tools', {
       method: 'POST',
       body: yaml,
       headers: { 'Content-Type': 'application/yaml', 'Accept': 'application/json' },
     })
   },
   deleteTool(name: string) {
-    return request<void>(`/admin/tools/${name}`, { method: 'DELETE' })
+    return request<void>(`/api/v1/admin/tools/${name}`, { method: 'DELETE' })
   },
   updateTool(name: string, data: Record<string, unknown>) {
-    return request<ToolInfo>('/admin/tools', {
+    return request<ToolInfo>('/api/v1/admin/tools', {
       method: 'POST',
       body: JSON.stringify({ name, ...data }),
     })
@@ -197,20 +219,20 @@ export const api = {
 
   // Sub-agents
   listSubAgents() {
-    return request<SubAgentInfo[]>('/admin/sub-agents')
+    return request<SubAgentInfo[]>('/api/v1/admin/sub-agents')
   },
   createSubAgent(yaml: string) {
-    return request<SubAgentInfo>('/admin/sub-agents', {
+    return request<SubAgentInfo>('/api/v1/admin/sub-agents', {
       method: 'POST',
       body: yaml,
       headers: { 'Content-Type': 'application/yaml', 'Accept': 'application/json' },
     })
   },
   deleteSubAgent(name: string) {
-    return request<void>(`/admin/sub-agents/${name}`, { method: 'DELETE' })
+    return request<void>(`/api/v1/admin/sub-agents/${name}`, { method: 'DELETE' })
   },
   updateSubAgent(name: string, data: Record<string, unknown>) {
-    return request<SubAgentInfo>('/admin/sub-agents', {
+    return request<SubAgentInfo>('/api/v1/admin/sub-agents', {
       method: 'POST',
       body: JSON.stringify({ name, ...data }),
     })
@@ -218,7 +240,7 @@ export const api = {
 
   // Rate limits
   updateToolRateLimit(toolName: string, config: Record<string, unknown>) {
-    return request<void>(`/admin/ratelimits/tool/${toolName}`, {
+    return request<void>(`/api/v1/admin/ratelimits/tool/${toolName}`, {
       method: 'PUT',
       body: JSON.stringify(config),
     })
@@ -226,21 +248,21 @@ export const api = {
 
   // Runtime observation (read-only)
   listRuntimeTools() {
-    return request<ToolInfo[]>('/admin/runtime/tools')
+    return request<ToolInfo[]>('/api/v1/admin/runtime/tools')
   },
   listRuntimeSubAgents() {
-    return request<SubAgentInfo[]>('/admin/runtime/sub-agents')
+    return request<SubAgentInfo[]>('/api/v1/admin/runtime/sub-agents')
   },
 
   // Graph
   async getGraphMermaid(agentId: string) {
-    const data = await request<{ agent_id: string; graphs: Record<string, string> }>(`/admin/graph/${agentId}/mermaid`)
+    const data = await request<{ agent_id: string; graphs: Record<string, string> }>(`/api/v1/admin/graph/${agentId}/mermaid`)
     // Join multiple graph diagrams
     const diagrams = Object.values(data.graphs ?? {}).join('\n')
     return { mermaid: diagrams }
   },
   getGraphStructure(agentId: string) {
-    return request<Record<string, unknown>>(`/admin/graph/${agentId}/structure`)
+    return request<Record<string, unknown>>(`/api/v1/admin/graph/${agentId}/structure`)
   },
 
   // Health

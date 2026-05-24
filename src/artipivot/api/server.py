@@ -46,7 +46,7 @@ def create_app() -> FastAPI:
 
     # Routers
     app.include_router(chat_router, prefix="/api/v1")
-    app.include_router(admin_router, prefix="/admin")
+    app.include_router(admin_router, prefix="/api/v1/admin")
 
     # Health check
     @app.get("/health")
@@ -62,29 +62,22 @@ def create_app() -> FastAPI:
 
         @app.middleware("http")
         async def spa_middleware(request: Request, call_next):
-            """Serve index.html for browser navigation (text/html) requests.
-
-            API calls from fetch/XHR send Accept: application/json — always let these through.
-            Browser navigation sends Accept: text/html — serve index.html for SPA routing.
-            """
+            """Serve index.html for browser navigation to SPA routes."""
             accept = request.headers.get("accept", "")
             path = request.url.path.lstrip("/")
 
-            # Always let API calls through (fetch/XHR with Accept: application/json)
-            if request.method == "GET" and "application/json" in accept:
+            # API routes live under /api/ and /health — always let through
+            if path.startswith(("api/", "health")):
                 return await call_next(request)
 
-            # Serve static files first
+            # Serve static files
             if request.method == "GET" and path:
                 file_path = _WEB_DIST / path
                 if file_path.is_file():
                     return FileResponse(file_path)
 
-            # Serve index.html for browser navigation (SPA client-side routing)
-            if (
-                request.method == "GET"
-                and "text/html" in accept
-            ):
+            # Everything else with Accept: text/html → SPA
+            if request.method == "GET" and "text/html" in accept:
                 return FileResponse(_WEB_DIST / "index.html")
 
             return await call_next(request)

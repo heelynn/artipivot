@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from artipivot.api.deps import get_gateway, get_memory_config, get_rate_limiter
+from artipivot.api.deps import get_agent_registry, get_gateway, get_memory_config, get_rate_limiter
 from artipivot.config.ratelimit import RateLimitError
 
 chat_router = APIRouter()
@@ -39,9 +39,12 @@ async def chat(agent_id: str, req: ChatRequest):
 
     # Invoke agent
     try:
+        registry = get_agent_registry()
+        agent_def = registry.get_def(agent_id) if registry else None
+        effective_memory = agent_def.memory_config if agent_def else get_memory_config()
         result = await gateway.invoke(
             agent_id, req.message, req.thread_id, user_id=req.user_id,
-            memory_config=get_memory_config(),
+            memory_config=effective_memory,
         )
     except ValueError:
         raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
@@ -81,12 +84,15 @@ async def chat_stream(agent_id: str, req: ChatRequest):
         final_messages: list = []
         streamed_any = False
         try:
+            registry = get_agent_registry()
+            agent_def = registry.get_def(agent_id) if registry else None
+            effective_memory = agent_def.memory_config if agent_def else get_memory_config()
             async for chunk in gateway.stream(
                 agent_id,
                 req.message,
                 req.thread_id,
                 user_id=req.user_id,
-                memory_config=get_memory_config(),
+                memory_config=effective_memory,
                 stream_mode="messages",
             ):
                 if isinstance(chunk, tuple) and len(chunk) == 2:

@@ -85,6 +85,12 @@ class AgentRegistry:
         if agent_def is None:
             raise ValueError(f"Agent not found: {agent_id}")
 
+        # Per-agent L2/L3 control: override checkpointer/store based on agent's memory config
+        if agent_def.memory_config.l2 is False:
+            checkpointer = None
+        if agent_def.memory_config.l3 is False:
+            store = None
+
         async with self._gateway.rebuild_guard(agent_id):
             sub_agent_nodes = self._resolve_sub_agents(
                 agent_def, checkpointer=checkpointer

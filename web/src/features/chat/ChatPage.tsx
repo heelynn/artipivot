@@ -3,6 +3,7 @@ import { useSSE, type Message } from '@/hooks/useSSE'
 import { api } from '@/lib/api'
 import type { AgentInfo } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { useTranslation } from 'react-i18next'
 import { Send, Bot, User, Loader2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -14,6 +15,7 @@ export function ChatPage() {
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [selectedAgent, setSelectedAgent] = useState<string>('')
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const { t } = useTranslation()
   const [threadId] = useState(() => crypto.randomUUID())
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -56,7 +58,7 @@ export function ChatPage() {
         )}
       >
         <div className="flex items-center justify-between border-b border-border p-3">
-          <span className="text-sm font-medium">Agents</span>
+          <span className="text-sm font-medium">{t('chat.agentsSidebar')}</span>
           <button
             onClick={() => setSidebarOpen(false)}
             className="rounded p-1 text-muted-foreground hover:bg-accent"
@@ -111,8 +113,8 @@ export function ChatPage() {
             <div className="flex h-full items-center justify-center">
               <div className="text-center text-muted-foreground">
                 <Bot size={48} className="mx-auto mb-4 opacity-20" />
-                <h2 className="text-xl font-medium">ArtiPivot Chat</h2>
-                <p className="mt-1 text-sm">Select an agent and start a conversation</p>
+                <h2 className="text-xl font-medium">{t('chat.title')}</h2>
+                <p className="mt-1 text-sm">{t('chat.subtitle')}</p>
               </div>
             </div>
           ) : (
@@ -124,7 +126,7 @@ export function ChatPage() {
               {isStreaming && nodeStatus && (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 size={14} className="animate-spin" />
-                  <span>Processing: {nodeStatus}...</span>
+                  <span>{t('chat.processing', { status: nodeStatus })}</span>
                 </div>
               )}
 
@@ -142,7 +144,7 @@ export function ChatPage() {
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={
-                selectedAgent ? `Message ${selectedAgent}...` : 'Select an agent first...'
+                selectedAgent ? t('chat.placeholder', { agent: selectedAgent }) : t('chat.placeholderNoAgent')
               }
               disabled={!selectedAgent || isStreaming}
               rows={1}

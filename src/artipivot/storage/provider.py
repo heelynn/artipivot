@@ -21,14 +21,13 @@ log = logging.getLogger(__name__)
 class StorageConfig:
     """Technology-agnostic storage configuration.
 
-    YAML expresses business intent, not implementation details.
-    Developers register the persistent backend via code.
-
     Attributes:
-        mode: "memory" (ephemeral) or "persistent" (survives restarts).
+        mode: "memory" (ephemeral) or "sqlite" (local file persistence).
+        db_path: SQLite database file path (only used when mode="sqlite").
     """
 
-    mode: str = "memory"  # "memory" | "persistent"
+    mode: str = "memory"
+    db_path: str = ".artipivot/data.db"
 
 
 class StorageProvider:
@@ -140,7 +139,7 @@ class StorageProvider:
         if not factory.supports(type_key):
             return None
 
-        config: dict[str, Any] = {}
+        config: dict[str, Any] = {"db_path": self._config.db_path}
         # PollingChangeNotifier needs DocumentStore for polling
         if type_key == TYPE_CHANGE_NOTIFIER:
             doc_store = self._get_or_create(TYPE_DOCUMENT_STORE)

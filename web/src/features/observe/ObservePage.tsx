@@ -3,9 +3,11 @@ import { api, type CircuitStatus } from '@/lib/api'
 import type { AgentInfo } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { useTranslation } from 'react-i18next'
 import { Activity, Zap } from 'lucide-react'
 
 export function ObservePage() {
+  const { t } = useTranslation()
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [circuits, setCircuits] = useState<Record<string, CircuitStatus>>({})
   const [selectedAgent, setSelectedAgent] = useState<string>('')
@@ -69,16 +71,16 @@ export function ObservePage() {
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="mx-auto max-w-5xl">
-        <h1 className="text-2xl font-semibold mb-1">Observability</h1>
+        <h1 className="text-2xl font-semibold mb-1">{t('observe.title')}</h1>
         <p className="text-sm text-muted-foreground mb-6">
-          Circuit breaker status and graph topology
+          {t('observe.subtitle')}
         </p>
 
         {/* Circuit breaker cards */}
         <div className="mb-8">
           <h2 className="text-lg font-medium mb-3 flex items-center gap-2">
             <Zap size={18} />
-            Circuit Breakers
+            {t('observe.circuitBreakers')}
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {agents.map(agent => {
@@ -92,15 +94,15 @@ export function ObservePage() {
                     {circuit?.circuit ? (
                       <div className="space-y-2">
                         <div className={`inline-flex rounded-md border px-2.5 py-0.5 text-xs font-medium ${stateColor(circuit.circuit.enabled)}`}>
-                          {circuit.circuit.enabled ? 'Active' : 'Disabled'}
+                          {circuit.circuit.enabled ? t('observe.active') : t('observe.disabled')}
                         </div>
                         <div className="text-xs text-muted-foreground space-y-0.5">
-                          <p>Failure threshold: {circuit.circuit.failure_threshold}</p>
-                          <p>Recovery timeout: {circuit.circuit.recovery_timeout}s</p>
+                          <p>{t('observe.failureThreshold', { value: circuit.circuit.failure_threshold })}</p>
+                          <p>{t('observe.recoveryTimeout', { value: circuit.circuit.recovery_timeout })}</p>
                         </div>
                       </div>
                     ) : (
-                      <span className="text-xs text-muted-foreground">No circuit breaker</span>
+                      <span className="text-xs text-muted-foreground">{t('observe.noCircuit')}</span>
                     )}
                   </CardContent>
                 </Card>
@@ -113,12 +115,12 @@ export function ObservePage() {
         <div>
           <h2 className="text-lg font-medium mb-3 flex items-center gap-2">
             <Activity size={18} />
-            Graph Topology
+            {t('observe.graphTopology')}
           </h2>
           <div className="mb-3">
             <Select value={selectedAgent} onValueChange={setSelectedAgent}>
               <SelectTrigger className="w-64">
-                <SelectValue placeholder="Select agent" />
+                <SelectValue placeholder={t('observe.selectAgent')} />
               </SelectTrigger>
               <SelectContent>
                 {agents.map(a => (
@@ -134,7 +136,7 @@ export function ObservePage() {
               <div ref={mermaidRef} className="flex justify-center overflow-auto" />
             ) : (
               <p className="text-center text-sm text-muted-foreground py-8">
-                {selectedAgent ? 'No graph data available' : 'Select an agent'}
+                {selectedAgent ? t('observe.noGraph') : t('observe.selectAgentPrompt')}
               </p>
             )}
           </div>

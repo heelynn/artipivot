@@ -380,6 +380,7 @@ class AgentUpdateDTO(BaseModel):
     tools: list[str] | None = None
     sub_agent_refs: list | None = None  # list of str | dict
     circuit: dict | None = None
+    memory: dict | None = None
 
 
 @admin_router.put("/agents/{agent_id}")
@@ -403,6 +404,8 @@ async def update_agent(agent_id: str, dto: AgentUpdateDTO):
         updates["sub_agent_refs"] = dto.sub_agent_refs
     if dto.circuit is not None:
         updates["circuit"] = dto.circuit
+    if dto.memory is not None:
+        updates["memory"] = dto.memory
 
     # Update in-memory if registered
     if agent_def is not None:
@@ -426,6 +429,9 @@ async def update_agent(agent_id: str, dto: AgentUpdateDTO):
                 agent_def.circuit.failure_threshold = c["failure_threshold"]
             if "recovery_timeout" in c:
                 agent_def.circuit.recovery_timeout = c["recovery_timeout"]
+        if dto.memory is not None:
+            from artipivot.memory.config import MemoryConfig
+            agent_def.memory_config = MemoryConfig.from_dict(dto.memory)
 
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -437,6 +443,14 @@ async def update_agent(agent_id: str, dto: AgentUpdateDTO):
         raise HTTPException(status_code=404, detail=str(e))
 
     if "tools" in updated and agent_def is not None:
+        try:
+            await registry.rebuild_agent(agent_id)
+        except Exception:
+            pass
+
+    # Memory changes (L2/L3) require graph rebuild because checkpointer/store
+    # are baked into the compiled graph at build time.
+    if "memory" in updated and agent_def is not None:
         try:
             await registry.rebuild_agent(agent_id)
         except Exception:

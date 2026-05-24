@@ -183,6 +183,9 @@ class ConfigService:
                 circuit["recovery_timeout"] = c["recovery_timeout"]
             data["circuit"] = circuit
             updated.append("circuit")
+        if "memory" in updates:
+            data["memory"] = updates["memory"]
+            updated.append("memory")
 
         if updated:
             await self._store.put("agents", agent_id, data)

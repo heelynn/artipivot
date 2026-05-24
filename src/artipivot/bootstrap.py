@@ -93,13 +93,20 @@ async def bootstrap(
             sub_agents=[s.name for s in manifest.sub_agents],
         )
 
-    # ── 4. StorageProvider — 技术决策，从 .env 读取 ───────────
+    # ── 4. StorageProvider — 系统配置存储 ───────────
     storage_mode = os.environ.get("ARTIPIVOT_STORAGE_MODE", "memory")
     storage_config = StorageConfig(mode=storage_mode)
     storage = StorageProvider(storage_config)
     await storage.setup()
 
     _log.info("bootstrap.storage_ready", mode=storage_config.mode)
+
+    # ── 4b. MemoryProvider — 记忆存储，独立策略 ───────────
+    memory_backend = os.environ.get("ARTIPIVOT_MEMORY_BACKEND", "memory")
+    memory_storage = StorageProvider(StorageConfig(mode=memory_backend))
+    await memory_storage.setup()
+
+    _log.info("bootstrap.memory_storage_ready", backend=memory_backend)
 
     # ── 4b. MemoryConfig from manifest ──
     memory_config = MemoryConfig.from_dict(manifest.memory) if manifest.memory else None
@@ -149,14 +156,14 @@ async def bootstrap(
     _log.info("bootstrap.sub_agents_from_store")
 
     # ── 9. Gateway + GraphFactory + AgentRegistry ───────────────
-    # L2/L3 controlled by memory_config
-    checkpointer = storage.checkpointer if memory_config and memory_config.l2 else None
-    lg_store = storage.store if memory_config and memory_config.l3 else None
+    # L2/L3 controlled by memory_config, backend chosen by memory_storage
+    checkpointer = memory_storage.checkpointer if memory_config and memory_config.l2 else None
+    lg_store = memory_storage.store if memory_config and memory_config.l3 else None
 
     gateway = AgentGateway(
         model_provider,
         config_center=config_center,
-        storage_provider=storage,
+        storage_provider=memory_storage,
     )
     graph_factory = GraphFactory(config_center)
 
@@ -189,11 +196,14 @@ async def bootstrap(
     _log.info("bootstrap.sub_agents_built", count=len(sub_agent_registry.list_sub_agents()))
 
     for agent_def in agents_from_db.values():
+        # Per-agent L2/L3: only pass checkpointer/store if agent enables them
+        agent_cp = checkpointer if agent_def.memory_config.l2 else None
+        agent_store = lg_store if agent_def.memory_config.l3 else None
         try:
             agent_registry.register_def(
                 agent_def,
-                checkpointer=checkpointer,
-                store=lg_store,
+                checkpointer=agent_cp,
+                store=agent_store,
             )
         except Exception:
             _log.error(

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { api, type AgentInfo, type CircuitStatus } from '@/lib/api'
+import { api, type AgentInfo, type CircuitStatus, type MemoryConfig } from '@/lib/api'
+import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -21,19 +22,20 @@ import { Card } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
-import { Bot, Plus, ChevronDown, ChevronRight, Settings, Zap, GitBranch, FileText, Pencil, Trash2, Wrench } from 'lucide-react'
-
-const MODEL_FIELDS = [
-  { key: 'provider', label: 'Provider' },
-  { key: 'name', label: 'Model Name' },
-  { key: 'api_key', label: 'API Key', sensitive: true },
-  { key: 'base_url', label: 'Base URL' },
-  { key: 'temperature', label: 'Temperature' },
-  { key: 'timeout', label: 'Timeout (s)' },
-  { key: 'max_tokens', label: 'Max Tokens' },
-]
+import { Bot, Plus, ChevronDown, ChevronRight, Settings, Zap, GitBranch, FileText, Pencil, Trash2, Wrench, Brain } from 'lucide-react'
 
 export function AgentsPage() {
+  const { t } = useTranslation()
+  const MODEL_FIELDS = [
+    { key: 'provider', label: t('agents.model.provider') },
+    { key: 'name', label: t('agents.model.modelName') },
+    { key: 'api_key', label: t('agents.model.apiKey'), sensitive: true },
+    { key: 'base_url', label: t('agents.model.baseUrl') },
+    { key: 'temperature', label: t('agents.model.temperature') },
+    { key: 'timeout', label: t('agents.model.timeout') },
+    { key: 'max_tokens', label: t('agents.model.maxTokens') },
+  ]
+
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null)
   const [circuitMap, setCircuitMap] = useState<Record<string, CircuitStatus>>({})
@@ -113,6 +115,29 @@ export function AgentsPage() {
         return { ...(ref as Record<string, unknown>) }
       })
       setEditForm({ sub_agent_refs: refs })
+    } else if (tab === 'memory') {
+      const m = agent.memory
+      setEditForm({
+        memory: {
+          l2: m?.l2 ?? true,
+          l3: m?.l3 ?? true,
+          context_window: {
+            enabled: m?.context_window?.enabled ?? false,
+            strategy: m?.context_window?.strategy ?? 'none',
+            trigger_tokens: m?.context_window?.trigger_tokens ?? 100000,
+            keep_messages: m?.context_window?.keep_messages ?? 20,
+          },
+          extraction: {
+            enabled: m?.extraction?.enabled ?? false,
+            max_messages: m?.extraction?.max_messages ?? 10,
+            write_on: m?.extraction?.write_on ?? 'every_request',
+          },
+          retention: {
+            knowledge_ttl_days: m?.retention?.knowledge_ttl_days ?? null,
+            max_items_per_namespace: m?.retention?.max_items_per_namespace ?? null,
+          },
+        },
+      })
     }
   }
 
@@ -146,6 +171,8 @@ export function AgentsPage() {
           return { name: r.name, public: false, strategy: r.strategy || 'react', tools: r.tools || [], system_prompt: r.system_prompt || '', strategy_config: r.strategy_config || {} }
         })
         payload = { sub_agent_refs: refs }
+      } else if (editTab === 'memory') {
+        payload = { memory: editForm.memory }
       } else {
         payload = editForm
       }
@@ -166,31 +193,31 @@ export function AgentsPage() {
       <div className="mx-auto max-w-5xl">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-semibold">Agent Management</h1>
-            <p className="text-sm text-muted-foreground mt-1">View, register, edit, and monitor agents</p>
+            <h1 className="text-2xl font-semibold">{t('agents.title')}</h1>
+            <p className="text-sm text-muted-foreground mt-1">{t('agents.subtitle')}</p>
           </div>
           <Dialog open={registerOpen} onOpenChange={setRegisterOpen}>
             <DialogTrigger asChild>
-              <Button><Plus size={16} className="mr-1" /> Register Agent</Button>
+              <Button><Plus size={16} className="mr-1" /> {t('agents.register')}</Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl">
-              <DialogHeader><DialogTitle>Register Agent</DialogTitle></DialogHeader>
+              <DialogHeader><DialogTitle>{t('agents.register')}</DialogTitle></DialogHeader>
               <textarea
                 value={yamlInput}
                 onChange={e => setYamlInput(e.target.value)}
-                placeholder={"agent_id: my_agent\nmodel:\n  provider: openai\n  name: gpt-4o\nsub_agent_refs:\n  - react_agent\nrouting:\n  intents:\n    greet: react_agent\n  confidence_threshold: 0.7"}
+                placeholder={t('agents.registerYamlPlaceholder')}
                 className="w-full h-64 rounded-md border border-input bg-background px-3 py-2 text-sm font-mono resize-none"
               />
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setRegisterOpen(false)}>Cancel</Button>
-                <Button onClick={handleRegister}>Register</Button>
+                <Button variant="outline" onClick={() => setRegisterOpen(false)}>{t('agents.cancel')}</Button>
+                <Button onClick={handleRegister}>{t('agents.registerAction')}</Button>
               </div>
             </DialogContent>
           </Dialog>
         </div>
 
         {loading ? (
-          <div className="text-center py-12 text-muted-foreground">Loading agents...</div>
+          <div className="text-center py-12 text-muted-foreground">{t('agents.loading')}</div>
         ) : (
           <div className="space-y-3">
             {agents.map(agent => {
@@ -208,7 +235,7 @@ export function AgentsPage() {
                     <Bot size={16} className="text-primary shrink-0" />
                     <span className="font-semibold min-w-[140px]">{agent.agent_id}</span>
                     <Badge variant="outline" className="font-mono">
-                      {typeof agent.model === 'object' && agent.model?.name ? String(agent.model.name) : 'default'}
+                      {typeof agent.model === 'object' && agent.model?.name ? String(agent.model.name) : t('agents.defaultModel')}
                     </Badge>
                     <div className="flex gap-1 flex-1">
                       {agent.sub_agent_refs?.map((ref: unknown, i: number) => (
@@ -218,14 +245,20 @@ export function AgentsPage() {
                     {circuit?.circuit && (
                       <Badge variant={circuit.circuit.enabled ? 'default' : 'secondary'}>
                         <Zap size={12} className="mr-1" />
-                        {circuit.circuit.enabled ? 'Circuit On' : 'Circuit Off'}
+                        {circuit.circuit.enabled ? t('agents.circuitOn') : t('agents.circuitOff')}
+                      </Badge>
+                    )}
+                    {agent.memory && (
+                      <Badge variant="outline">
+                        <Brain size={12} className="mr-1" />
+                        L2{agent.memory.l2 ? '✓' : '✗'} L3{agent.memory.l3 ? '✓' : '✗'}
                       </Badge>
                     )}
                     <span
                       className="ml-auto shrink-0 p-1 rounded hover:bg-destructive/10 cursor-pointer"
                       onClick={e => {
                         e.stopPropagation()
-                        if (window.confirm(`Delete agent "${agent.agent_id}"? This cannot be undone.`)) {
+                        if (window.confirm(t('agents.deleteConfirm', { id: agent.agent_id }))) {
                           api.deleteAgent(agent.agent_id).then(loadAgents).catch(console.error)
                         }
                       }}
@@ -242,13 +275,13 @@ export function AgentsPage() {
                       <Separator />
                       <div className="p-4 space-y-4 bg-muted/20">
                         <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs text-muted-foreground">Agent Configuration</span>
+                          <span className="text-xs text-muted-foreground">{t('agents.agentConfig')}</span>
                           <Button variant="outline" size="sm" onClick={() => openEdit(agent, 'model')}>
-                            <Pencil size={12} className="mr-1" /> Edit
+                            <Pencil size={12} className="mr-1" /> {t('agents.edit')}
                           </Button>
                         </div>
                         {/* Model config */}
-                        <SectionHeader icon={<Settings size={14} />} title="Model Configuration" />
+                        <SectionHeader icon={<Settings size={14} />} title={t('agents.model.title')} />
                         {typeof agent.model === 'object' && agent.model ? (
                           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                             {MODEL_FIELDS.map(({ key, label, sensitive }) => {
@@ -265,14 +298,14 @@ export function AgentsPage() {
                             })}
                           </div>
                         ) : (
-                          <p className="text-sm text-muted-foreground">Default model configuration</p>
+                          <p className="text-sm text-muted-foreground">{t('agents.model.defaultConfig')}</p>
                         )}
 
                         {/* Sub-agents */}
                         {agent.sub_agent_refs && agent.sub_agent_refs.length > 0 && (
                           <div>
                             <h4 className="text-sm font-medium flex items-center gap-2 mb-2">
-                              <Wrench size={14} /> Sub-Agents
+                              <Wrench size={14} /> {t('agents.subAgents.title')}
                             </h4>
                             <div className="flex gap-2 flex-wrap">
                               {agent.sub_agent_refs.map((ref: unknown, i: number) => (
@@ -285,15 +318,15 @@ export function AgentsPage() {
                         {/* Routing */}
                         {(agent.intent_map && Object.keys(agent.intent_map).length > 0 || agent.confidence_threshold != null) && (
                           <div>
-                            <SectionHeader icon={<GitBranch size={14} />} title="Routing"
-                              subtile={`Threshold: ${agent.confidence_threshold ?? '-'}`}
+                            <SectionHeader icon={<GitBranch size={14} />} title={t('agents.routing.title')}
+                              subtile={t('agents.routing.threshold', { value: agent.confidence_threshold ?? '-' })}
                               />
                             <div className="rounded-lg border border-border overflow-hidden">
                               <Table>
                                 <TableHeader>
                                   <TableRow>
-                                    <TableHead className="w-1/2">Intent</TableHead>
-                                    <TableHead>Target Sub-Agent</TableHead>
+                                    <TableHead className="w-1/2">{t('agents.routing.intent')}</TableHead>
+                                    <TableHead>{t('agents.routing.targetSubAgent')}</TableHead>
                                   </TableRow>
                                 </TableHeader>
                                 <TableBody>
@@ -313,31 +346,31 @@ export function AgentsPage() {
 
                         {/* Circuit Breaker */}
                         <div>
-                          <SectionHeader icon={<Zap size={14} />} title="Circuit Breaker"
+                          <SectionHeader icon={<Zap size={14} />} title={t('agents.circuit.title')}
                             />
                           {circuit?.circuit ? (
                             <div className="flex gap-3">
-                              <InfoBlock label="Status" value={circuit.circuit.enabled ? 'Enabled' : 'Disabled'}
+                              <InfoBlock label={t('agents.circuit.status')} value={circuit.circuit.enabled ? t('agents.circuit.enabled') : t('agents.circuit.disabled')}
                                 accent={circuit.circuit.enabled} />
-                              <InfoBlock label="Failure Threshold" value={String(circuit.circuit.failure_threshold)} />
-                              <InfoBlock label="Recovery Timeout" value={`${circuit.circuit.recovery_timeout}s`} />
+                              <InfoBlock label={t('agents.circuit.failureThreshold')} value={String(circuit.circuit.failure_threshold)} />
+                              <InfoBlock label={t('agents.circuit.recoveryTimeout')} value={`${circuit.circuit.recovery_timeout}s`} />
                             </div>
                           ) : (
-                            <p className="text-sm text-muted-foreground">Default circuit breaker</p>
+                            <p className="text-sm text-muted-foreground">{t('agents.circuit.defaultCircuit')}</p>
                           )}
                         </div>
 
                         {/* Prompts */}
                         {agent.prompts && Object.keys(agent.prompts).length > 0 && (
                           <div>
-                            <SectionHeader icon={<FileText size={14} />} title="Prompts"
+                            <SectionHeader icon={<FileText size={14} />} title={t('agents.prompts.title')}
                               />
                             <div className="space-y-2">
                               {Object.entries(agent.prompts).map(([key, value]) => (
                                 <div key={key} className="rounded-md border border-border bg-background p-3">
                                   <div className="text-xs text-muted-foreground mb-1 font-medium capitalize">{key}</div>
                                   <div className="text-sm whitespace-pre-wrap">
-                                    {value || <span className="text-muted-foreground italic">empty</span>}
+                                    {value || <span className="text-muted-foreground italic">{t('agents.prompts.empty')}</span>}
                                   </div>
                                 </div>
                               ))}
@@ -352,7 +385,7 @@ export function AgentsPage() {
             })}
 
             {agents.length === 0 && (
-              <div className="text-center py-12 text-muted-foreground">No agents registered</div>
+              <div className="text-center py-12 text-muted-foreground">{t('agents.noAgents')}</div>
             )}
           </div>
         )}
@@ -361,17 +394,18 @@ export function AgentsPage() {
         <Dialog open={editingAgent != null} onOpenChange={(open) => { if (!open) setEditingAgent(null) }}>
           <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Edit {editingAgent}</DialogTitle>
+              <DialogTitle>{t('agents.editTitle', { agent: editingAgent })}</DialogTitle>
             </DialogHeader>
             <Tabs value={editTab} onValueChange={tab => {
               if (agent) openEdit(agent, tab)
             }}>
               <TabsList>
-                <TabsTrigger value="model">Model</TabsTrigger>
-                <TabsTrigger value="routing">Routing</TabsTrigger>
-                <TabsTrigger value="prompts">Prompts</TabsTrigger>
-                <TabsTrigger value="circuit">Circuit</TabsTrigger>
-                <TabsTrigger value="sub-agents">Sub-Agents</TabsTrigger>
+                <TabsTrigger value="model">{t('agents.model.tab')}</TabsTrigger>
+                <TabsTrigger value="routing">{t('agents.routing.tab')}</TabsTrigger>
+                <TabsTrigger value="prompts">{t('agents.prompts.tab')}</TabsTrigger>
+                <TabsTrigger value="circuit">{t('agents.circuit.tab')}</TabsTrigger>
+                <TabsTrigger value="sub-agents">{t('agents.subAgents.tab')}</TabsTrigger>
+                <TabsTrigger value="memory">{t('agents.memory.tab')}</TabsTrigger>
               </TabsList>
 
               <TabsContent value="model" className="space-y-3 mt-3">
@@ -390,7 +424,7 @@ export function AgentsPage() {
 
               <TabsContent value="routing" className="space-y-3 mt-3">
                 <div>
-                  <label className="text-sm font-medium">Confidence Threshold</label>
+                  <label className="text-sm font-medium">{t('agents.routing.confidenceThreshold')}</label>
                   <Input
                     type="number"
                     step="0.1"
@@ -402,7 +436,7 @@ export function AgentsPage() {
                   />
                 </div>
                 <div>
-                  <label className="text-sm font-medium mb-2 block">Intent Mapping</label>
+                  <label className="text-sm font-medium mb-2 block">{t('agents.routing.intentMapping')}</label>
                   <div className="space-y-3">
                     {Object.entries((editForm.intent_map as Record<string, string>) ?? {}).map(([intent, target]) => {
                       const descs = (editForm.intent_descriptions as Record<string, string>) ?? {}
@@ -421,7 +455,7 @@ export function AgentsPage() {
                               setEditForm(f => ({ ...f, intent_map: newMap, intent_descriptions: newDescs }))
                             }}
                             className="font-mono text-sm flex-1"
-                            placeholder="Intent name"
+                            placeholder={t('agents.routing.intentNamePlaceholder')}
                           />
                           <span className="text-muted-foreground">→</span>
                           <Input
@@ -432,7 +466,7 @@ export function AgentsPage() {
                               setEditForm(f => ({ ...f, intent_map: newMap }))
                             }}
                             className="font-mono text-sm flex-1"
-                            placeholder="Sub-agent"
+                            placeholder={t('agents.routing.subAgentPlaceholder')}
                           />
                           <Button variant="ghost" size="sm" onClick={() => {
                             const newMap = { ...(editForm.intent_map as Record<string, string>) }
@@ -452,7 +486,7 @@ export function AgentsPage() {
                             setEditForm(f => ({ ...f, intent_descriptions: newDescs }))
                           }}
                           className="text-xs w-full"
-                          placeholder="Description (for LLM classification prompt)"
+                          placeholder={t('agents.routing.descriptionPlaceholder')}
                         />
                       </div>
                     )})}
@@ -460,7 +494,7 @@ export function AgentsPage() {
                       const newMap = { ...(editForm.intent_map as Record<string, string>), '': '' }
                       setEditForm(f => ({ ...f, intent_map: newMap }))
                     }}>
-                      <Plus size={14} className="mr-1" /> Add Intent
+                      <Plus size={14} className="mr-1" /> {t('agents.routing.addIntent')}
                     </Button>
                   </div>
                 </div>
@@ -479,7 +513,7 @@ export function AgentsPage() {
                           setEditForm(f => ({ ...f, prompts: newPrompts }))
                         }}
                         className="font-mono text-sm flex-1"
-                        placeholder="Prompt name"
+                        placeholder={t('agents.prompts.promptNamePlaceholder')}
                       />
                       <Button variant="ghost" size="sm" onClick={() => {
                         const newPrompts = { ...(editForm.prompts as Record<string, string>) }
@@ -504,13 +538,13 @@ export function AgentsPage() {
                   const newPrompts = { ...(editForm.prompts as Record<string, string>), '': '' }
                   setEditForm(f => ({ ...f, prompts: newPrompts }))
                 }}>
-                  <Plus size={14} className="mr-1" /> Add Prompt
+                  <Plus size={14} className="mr-1" /> {t('agents.prompts.addPrompt')}
                 </Button>
               </TabsContent>
 
               <TabsContent value="circuit" className="space-y-3 mt-3">
                 <div className="flex items-center gap-3">
-                  <label className="text-sm font-medium">Enabled</label>
+                  <label className="text-sm font-medium">{t('agents.circuit.enabled')}</label>
                   <input
                     type="checkbox"
                     checked={(editForm.circuit as Record<string, unknown>)?.enabled as boolean ?? true}
@@ -521,7 +555,7 @@ export function AgentsPage() {
                   />
                 </div>
                 <div>
-                  <label className="text-sm font-medium">Failure Threshold</label>
+                  <label className="text-sm font-medium">{t('agents.circuit.failureThreshold')}</label>
                   <Input
                     type="number"
                     value={String((editForm.circuit as Record<string, unknown>)?.failure_threshold ?? 5)}
@@ -533,7 +567,7 @@ export function AgentsPage() {
                   />
                 </div>
                 <div>
-                  <label className="text-sm font-medium">Recovery Timeout (seconds)</label>
+                  <label className="text-sm font-medium">{t('agents.circuit.recoveryTimeoutSec')}</label>
                   <Input
                     type="number"
                     value={String((editForm.circuit as Record<string, unknown>)?.recovery_timeout ?? 60)}
@@ -565,15 +599,15 @@ export function AgentsPage() {
                           value={(ref.name as string) ?? ''}
                           onChange={e => update({ name: e.target.value })}
                           className="font-mono text-sm flex-1"
-                          placeholder="Sub-agent name"
+                          placeholder={t('agents.subAgents.namePlaceholder')}
                         />
                         <select
                           value={isPublic ? 'public' : 'inline'}
                           onChange={e => update({ public: e.target.value === 'public' })}
                           className="text-xs rounded-md border border-input bg-background px-2 py-1"
                         >
-                          <option value="public">Public</option>
-                          <option value="inline">Inline</option>
+                          <option value="public">{t('agents.subAgents.public')}</option>
+                          <option value="inline">{t('agents.subAgents.inline')}</option>
                         </select>
                         <Button variant="ghost" size="sm" onClick={remove}>
                           <Trash2 size={14} className="text-destructive" />
@@ -582,7 +616,7 @@ export function AgentsPage() {
                       {!isPublic && (ref.strategy as string) !== 'dsl' && (
                         <div className="space-y-2 pl-2 border-l-2 border-primary/30">
                           <div>
-                            <label className="text-xs text-muted-foreground">Strategy</label>
+                            <label className="text-xs text-muted-foreground">{t('agents.subAgents.strategy')}</label>
                             <select
                               value={(ref.strategy as string) ?? 'react'}
                               onChange={e => update({ strategy: e.target.value })}
@@ -594,21 +628,21 @@ export function AgentsPage() {
                             </select>
                           </div>
                           <div>
-                            <label className="text-xs text-muted-foreground">Tools (comma-separated)</label>
+                            <label className="text-xs text-muted-foreground">{t('agents.subAgents.toolsLabel')}</label>
                             <Input
                               value={((ref.tools as string[]) ?? []).join(', ')}
                               onChange={e => update({ tools: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
                               className="mt-0.5 font-mono text-sm"
-                              placeholder="echo, current_time"
+                              placeholder={t('agents.subAgents.toolsPlaceholder')}
                             />
                           </div>
                           <div>
-                            <label className="text-xs text-muted-foreground">System Prompt</label>
+                            <label className="text-xs text-muted-foreground">{t('agents.subAgents.systemPrompt')}</label>
                             <textarea
                               value={(ref.system_prompt as string) ?? ''}
                               onChange={e => update({ system_prompt: e.target.value })}
                               className="w-full h-24 mt-0.5 rounded-md border border-input bg-background px-2 py-1 text-xs font-mono resize-none"
-                              placeholder="You are a helpful assistant..."
+                              placeholder={t('agents.subAgents.systemPromptPlaceholder')}
                             />
                           </div>
                         </div>
@@ -616,7 +650,7 @@ export function AgentsPage() {
                       {!isPublic && (ref.strategy as string) === 'dsl' && (
                         <div className="space-y-2 pl-2 border-l-2 border-primary/30">
                           <div>
-                            <label className="text-xs text-muted-foreground">Strategy</label>
+                            <label className="text-xs text-muted-foreground">{t('agents.subAgents.strategy')}</label>
                             <select
                               value="dsl"
                               onChange={e => update({ strategy: e.target.value })}
@@ -641,21 +675,178 @@ export function AgentsPage() {
                     const newRefs = [...((editForm.sub_agent_refs as unknown[]) ?? []), { name: '', public: true }]
                     setEditForm(f => ({ ...f, sub_agent_refs: newRefs }))
                   }}>
-                    <Plus size={14} className="mr-1" /> Add Public Ref
+                    <Plus size={14} className="mr-1" /> {t('agents.subAgents.addPublic')}
                   </Button>
                   <Button variant="outline" size="sm" onClick={() => {
                     const newRefs = [...((editForm.sub_agent_refs as unknown[]) ?? []), { name: '', public: false, strategy: 'react', tools: [], system_prompt: '' }]
                     setEditForm(f => ({ ...f, sub_agent_refs: newRefs }))
                   }}>
-                    <Plus size={14} className="mr-1" /> Add Inline
+                    <Plus size={14} className="mr-1" /> {t('agents.subAgents.addInline')}
                   </Button>
                 </div>
               </TabsContent>
+
+              <TabsContent value="memory" className="space-y-4 mt-3">
+                {(() => {
+                  const m = (editForm.memory ?? {}) as MemoryConfig
+                  const updateMemory = (patch: Partial<MemoryConfig>) =>
+                    setEditForm(f => ({ ...f, memory: { ...(f.memory as MemoryConfig), ...patch } }))
+                  const cw = m.context_window ?? {}
+                  const updateCW = (patch: Record<string, unknown>) =>
+                    setEditForm(f => ({ ...f, memory: { ...(f.memory as MemoryConfig), context_window: { ...(f.memory as MemoryConfig).context_window, ...patch } } }))
+                  const ext = m.extraction ?? {}
+                  const updateExt = (patch: Record<string, unknown>) =>
+                    setEditForm(f => ({ ...f, memory: { ...(f.memory as MemoryConfig), extraction: { ...(f.memory as MemoryConfig).extraction, ...patch } } }))
+                  const ret = m.retention ?? {}
+                  const updateRet = (patch: Record<string, unknown>) =>
+                    setEditForm(f => ({ ...f, memory: { ...(f.memory as MemoryConfig), retention: { ...(f.memory as MemoryConfig).retention, ...patch } } }))
+
+                  return (
+                    <>
+                      {/* ── L2 Session Memory ── */}
+                      <div className="rounded-md border-2 border-blue-500/30 bg-blue-500/5 p-3 space-y-2">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="inline-flex items-center justify-center rounded bg-blue-500 text-white text-xs font-bold px-1.5 py-0.5">L2</span>
+                          <span className="text-sm font-semibold">{t('agents.memory.l2Title')}</span>
+                          <span className="text-xs text-muted-foreground">{t('agents.memory.l2Subtitle')}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground pl-1">{t('agents.memory.l2Desc')}</p>
+                        <div className="flex items-center gap-3">
+                          <input type="checkbox" checked={m.l2 ?? true} onChange={e => updateMemory({ l2: e.target.checked })} />
+                          <label className="text-sm">{t('agents.memory.l2Enable')}</label>
+                        </div>
+                      </div>
+
+                      {/* ── L3 Long-term Memory ── */}
+                      <div className="rounded-md border-2 border-purple-500/30 bg-purple-500/5 p-3 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center justify-center rounded bg-purple-500 text-white text-xs font-bold px-1.5 py-0.5">L3</span>
+                          <span className="text-sm font-semibold">{t('agents.memory.l3Title')}</span>
+                          <span className="text-xs text-muted-foreground">{t('agents.memory.l3Subtitle')}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground pl-1">{t('agents.memory.l3Desc')}</p>
+                        <div className="flex items-center gap-3">
+                          <input type="checkbox" checked={m.l3 ?? true} onChange={e => updateMemory({ l3: e.target.checked })} />
+                          <label className="text-sm">{t('agents.memory.l3Enable')}</label>
+                        </div>
+
+                        {/* Context Window — L3 */}
+                        <div className="rounded-md border border-border bg-background p-3 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-muted-foreground border rounded px-1 py-0.5">L3</span>
+                            <div className="flex items-center gap-3">
+                              <input type="checkbox" checked={cw.enabled ?? false} onChange={e => updateCW({ enabled: e.target.checked })} />
+                              <label className="text-sm font-medium">{t('agents.memory.cwTitle')}</label>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3 pl-6">
+                            <div>
+                              <label className="text-xs text-muted-foreground">{t('agents.memory.strategy')}</label>
+                              <select
+                                value={cw.strategy ?? 'none'}
+                                onChange={e => updateCW({ strategy: e.target.value })}
+                                className="w-full mt-0.5 text-sm rounded-md border border-input bg-background px-2 py-1 font-mono"
+                              >
+                                <option value="none">none</option>
+                                <option value="summarize">summarize</option>
+                                <option value="trim">trim</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground">{t('agents.memory.triggerTokens')}</label>
+                              <Input
+                                type="number"
+                                value={String(cw.trigger_tokens ?? 100000)}
+                                onChange={e => updateCW({ trigger_tokens: parseInt(e.target.value) || 100000 })}
+                                className="mt-0.5 font-mono text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground">{t('agents.memory.keepMessages')}</label>
+                              <Input
+                                type="number"
+                                value={String(cw.keep_messages ?? 20)}
+                                onChange={e => updateCW({ keep_messages: parseInt(e.target.value) || 20 })}
+                                className="mt-0.5 font-mono text-sm"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Extraction — L3 */}
+                        <div className="rounded-md border border-border bg-background p-3 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-muted-foreground border rounded px-1 py-0.5">L3</span>
+                            <div className="flex items-center gap-3">
+                              <input type="checkbox" checked={ext.enabled ?? false} onChange={e => updateExt({ enabled: e.target.checked })} />
+                              <label className="text-sm font-medium">{t('agents.memory.extractionTitle')}</label>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3 pl-6">
+                            <div>
+                              <label className="text-xs text-muted-foreground">{t('agents.memory.maxMessages')}</label>
+                              <Input
+                                type="number"
+                                value={String(ext.max_messages ?? 10)}
+                                onChange={e => updateExt({ max_messages: parseInt(e.target.value) || 10 })}
+                                className="mt-0.5 font-mono text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground">{t('agents.memory.writeOn')}</label>
+                              <select
+                                value={ext.write_on ?? 'every_request'}
+                                onChange={e => updateExt({ write_on: e.target.value })}
+                                className="w-full mt-0.5 text-sm rounded-md border border-input bg-background px-2 py-1 font-mono"
+                              >
+                                <option value="every_request">every_request</option>
+                                <option value="every_n_messages">every_n_messages</option>
+                                <option value="end_of_session">end_of_session</option>
+                                <option value="disabled">disabled</option>
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Retention — L3 */}
+                        <div className="rounded-md border border-border bg-background p-3 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-muted-foreground border rounded px-1 py-0.5">L3</span>
+                            <label className="text-sm font-medium">{t('agents.memory.retentionTitle')}</label>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3 pl-6">
+                            <div>
+                              <label className="text-xs text-muted-foreground">{t('agents.memory.knowledgeTtl')}</label>
+                              <Input
+                                type="number"
+                                value={ret.knowledge_ttl_days != null ? String(ret.knowledge_ttl_days) : ''}
+                                onChange={e => updateRet({ knowledge_ttl_days: e.target.value ? parseInt(e.target.value) : null })}
+                                placeholder={t('agents.memory.knowledgeTtlPlaceholder')}
+                                className="mt-0.5 font-mono text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground">{t('agents.memory.maxItems')}</label>
+                              <Input
+                                type="number"
+                                value={ret.max_items_per_namespace != null ? String(ret.max_items_per_namespace) : ''}
+                                onChange={e => updateRet({ max_items_per_namespace: e.target.value ? parseInt(e.target.value) : null })}
+                                placeholder={t('agents.memory.maxItemsPlaceholder')}
+                                className="mt-0.5 font-mono text-sm"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )
+                })()}
+              </TabsContent>
             </Tabs>
             <div className="flex justify-end gap-2 mt-4">
-              <Button variant="outline" onClick={() => setEditingAgent(null)}>Cancel</Button>
+              <Button variant="outline" onClick={() => setEditingAgent(null)}>{t('agents.cancel')}</Button>
               <Button onClick={handleSave} disabled={saving}>
-                {saving ? 'Saving...' : 'Save Changes'}
+                {saving ? t('agents.saving') : t('agents.saveChanges')}
               </Button>
             </div>
           </DialogContent>
@@ -692,6 +883,7 @@ function InfoBlock({ label, value, accent }: { label: string; value: string; acc
 const NODE_TYPES = ['llm', 'tool', 'tools', 'sub_agent']
 
 function GraphEditor({ graph, onChange }: { graph: Record<string, unknown>; onChange: (g: Record<string, unknown>) => void }) {
+  const { t } = useTranslation()
   const nodes = (graph.nodes as Record<string, Record<string, unknown>>) ?? {}
   const edges = (graph.edges as Array<{ from: string; to: string }>) ?? []
 
@@ -737,9 +929,9 @@ function GraphEditor({ graph, onChange }: { graph: Record<string, unknown>; onCh
     <div className="space-y-3">
       <div>
         <div className="flex items-center justify-between mb-1">
-          <label className="text-xs text-muted-foreground">Nodes ({Object.keys(nodes).length})</label>
+          <label className="text-xs text-muted-foreground">{t('agents.graphEditor.nodes', { count: Object.keys(nodes).length })}</label>
           <Button variant="ghost" size="sm" onClick={addNode}>
-            <Plus size={12} className="mr-0.5" /> Node
+            <Plus size={12} className="mr-0.5" /> {t('agents.graphEditor.node')}
           </Button>
         </div>
         <div className="space-y-1.5">
@@ -749,7 +941,7 @@ function GraphEditor({ graph, onChange }: { graph: Record<string, unknown>; onCh
                 defaultValue={name}
                 onBlur={e => { const v = e.target.value.trim(); if (v && v !== name) renameNode(name, v) }}
                 className="font-mono text-xs h-7 w-24"
-                placeholder="name"
+                placeholder={t('agents.graphEditor.namePlaceholder')}
               />
               <select
                 value={(node.type as string) ?? 'llm'}
@@ -763,7 +955,7 @@ function GraphEditor({ graph, onChange }: { graph: Record<string, unknown>; onCh
                   value={((node.tools as string[]) ?? []).join(',')}
                   onChange={e => updateNode(name, { tools: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
                   className="font-mono text-xs h-7 flex-1"
-                  placeholder="tools"
+                  placeholder={t('agents.graphEditor.toolsPlaceholder')}
                 />
               )}
               {node.type === 'llm' && (
@@ -771,7 +963,7 @@ function GraphEditor({ graph, onChange }: { graph: Record<string, unknown>; onCh
                   value={(node.system_prompt as string) ?? ''}
                   onChange={e => updateNode(name, { system_prompt: e.target.value })}
                   className="font-mono text-xs h-7 flex-1"
-                  placeholder="prompt"
+                  placeholder={t('agents.graphEditor.promptPlaceholder')}
                 />
               )}
               <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => removeNode(name)}>
@@ -783,9 +975,9 @@ function GraphEditor({ graph, onChange }: { graph: Record<string, unknown>; onCh
       </div>
       <div>
         <div className="flex items-center justify-between mb-1">
-          <label className="text-xs text-muted-foreground">Edges ({edges.length})</label>
+          <label className="text-xs text-muted-foreground">{t('agents.graphEditor.edges', { count: edges.length })}</label>
           <Button variant="ghost" size="sm" onClick={addEdge}>
-            <Plus size={12} className="mr-0.5" /> Edge
+            <Plus size={12} className="mr-0.5" /> {t('agents.graphEditor.edge')}
           </Button>
         </div>
         <div className="space-y-1">

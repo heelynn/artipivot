@@ -1,5 +1,6 @@
 import { Outlet, NavLink } from 'react-router-dom'
 import { useTheme } from '@/hooks/useTheme'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import {
   MessageSquare,
@@ -9,22 +10,26 @@ import {
   Eye,
   Sun,
   Moon,
+  Languages,
   PanelLeftClose,
   PanelLeft,
 } from 'lucide-react'
 import { useState } from 'react'
 
-const navItems = [
-  { to: '/', label: 'Chat', icon: MessageSquare },
-  { to: '/admin/agents', label: 'Agents', icon: Bot },
-  { to: '/admin/config', label: 'Config', icon: Settings },
-  { to: '/admin/observe', label: 'Observe', icon: Activity },
-  { to: '/admin/runtime', label: 'Runtime', icon: Eye },
-]
-
 export function AppLayout() {
   const { theme, toggleTheme } = useTheme()
+  const { t, i18n } = useTranslation()
   const [collapsed, setCollapsed] = useState(false)
+
+  const navItems = [
+    { to: '/', label: t('nav.chat'), icon: MessageSquare },
+    { to: '/admin/agents', label: t('nav.agents'), icon: Bot },
+    { to: '/admin/config', label: t('nav.config'), icon: Settings },
+    { to: '/admin/observe', label: t('nav.observe'), icon: Activity },
+    { to: '/admin/runtime', label: t('nav.runtime'), icon: Eye },
+  ]
+
+  const toggleLang = () => i18n.changeLanguage(i18n.language === 'zh' ? 'en' : 'zh')
 
   return (
     <div className="flex h-screen bg-background text-foreground">
@@ -73,13 +78,20 @@ export function AppLayout() {
         </nav>
 
         {/* Bottom controls */}
-        <div className="border-t border-sidebar-border p-2">
+        <div className="border-t border-sidebar-border p-2 space-y-1">
           <button
             onClick={toggleTheme}
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground"
           >
             {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-            {!collapsed && <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>}
+            {!collapsed && <span>{theme === 'dark' ? t('nav.light') : t('nav.dark')}</span>}
+          </button>
+          <button
+            onClick={toggleLang}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+          >
+            <Languages size={18} />
+            {!collapsed && <span>{t('nav.switchLang')}</span>}
           </button>
         </div>
       </aside>
