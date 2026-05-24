@@ -1,88 +1,59 @@
-"""Storage backend registry — two slots: memory (built-in) + persistent (developer-registered).
+"""Storage backend registry — mode name directly selects the factory.
 
-YAML chooses between "memory" and "persistent" — technology-agnostic.
-Developers register their persistent backend (postgres, milvus, etc.) via code.
+Supported modes: memory (in-memory), sqlite (local file), postgres (remote).
 """
 
 from __future__ import annotations
 
-import logging
-from typing import Any
+from artipivot.storage.factory import (
+    BackendFactory,
+    MemoryFactory,
+    SqliteFactory,
+    PostgresFactory,
+)
 
-from artipivot.storage.factory import ALL_TYPES, BackendFactory, MemoryFactory
+# Built-in factories — mode name → factory
+_BUILTIN: dict[str, BackendFactory] = {
+    "memory": MemoryFactory(),
+    "sqlite": SqliteFactory(),
+}
 
-log = logging.getLogger(__name__)
-
-# Built-in memory factory — always available
-_memory_factory = MemoryFactory()
-
-# Persistent factory — registered by developer, None until registered
-_persistent_factory: BackendFactory | None = None
-
-
-def register_persistent(factory: BackendFactory) -> None:
-    """Register the persistent storage backend factory.
-
-    Call this once during application startup (before bootstrap).
-    The factory decides the actual technology (postgres, milvus, etc.).
-
-    Args:
-        factory: A BackendFactory instance for the persistent backend.
-
-    Raises:
-        TypeError: If factory is not a BackendFactory instance.
-    """
-    global _persistent_factory
-
-    if not isinstance(factory, BackendFactory):
-        raise TypeError(f"Expected BackendFactory, got {type(factory).__name__}")
-
-    _persistent_factory = factory
-    log.info("Registered persistent storage backend: %s", factory.name)
+# Additional factories registered at runtime (e.g. postgres)
+_registered: dict[str, BackendFactory] = {}
 
 
-def get_persistent() -> BackendFactory | None:
-    """Return the registered persistent factory, or None."""
-    return _persistent_factory
+def register_factory(factory: BackendFactory) -> None:
+    """Register a storage backend factory at runtime."""
+    _registered[factory.name] = factory
 
 
 def resolve(mode: str, type_key: str) -> BackendFactory:
-    """Resolve the factory for a given mode and storage type.
+    """Resolve the factory for a given mode.
 
     Args:
-        mode: "memory" or "persistent".
+        mode: "memory", "sqlite", "postgres", etc.
         type_key: One of the TYPE_* constants.
 
-    Returns:
-        A BackendFactory that supports the given type.
-
     Raises:
-        ValueError: If mode is "persistent" but no factory registered,
-                    or if the factory doesn't support the type.
+        ValueError: If mode is unknown or factory doesn't support the type.
     """
-    if mode == "memory":
-        return _memory_factory
-
-    if mode == "persistent":
-        if _persistent_factory is None:
-            raise ValueError(
-                "No persistent storage backend registered. "
-                "Call register_persistent(factory) before bootstrap."
-            )
-        if not _persistent_factory.supports(type_key):
-            raise ValueError(
-                f"Persistent backend '{_persistent_factory.name}' does not "
-                f"support storage type '{type_key}'."
-            )
-        return _persistent_factory
-
-    raise ValueError(f"Unknown storage mode: '{mode}'. Use 'memory' or 'persistent'.")
+    factory = _registered.get(mode) or _BUILTIN.get(mode)
+    if factory is None:
+        raise ValueError(
+            f"Unknown storage mode: '{mode}'. "
+            f"Available: {sorted(_BUILTIN) + sorted(_registered)}"
+        )
+    if not factory.supports(type_key):
+        raise ValueError(
+            f"Backend '{factory.name}' does not support storage type '{type_key}'."
+        )
+    return factory
 
 
-def available_backends(type: str | None = None) -> list[str]:
+def available_backends(type_key: str | None = None) -> list[str]:
     """List available backend names."""
-    names = ["memory"]
-    if _persistent_factory is not None:
-        if type is None or _persistent_factory.supports(type):
-            names.append(_persistent_factory.name)
-    return names
+    names = []
+    for name, f in {**_BUILTIN, **_registered}.items():
+        if type_key is None or f.supports(type_key):
+            names.append(name)
+    return sorted(names)

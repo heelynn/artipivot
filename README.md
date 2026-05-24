@@ -222,6 +222,42 @@ ARTIPIVOT_STORAGE_MODE=memory
 # register_persistent(YourPersistentFactory())
 ```
 
+## Web 控制台
+
+启动服务后访问 `http://localhost:5173`，5 个页面覆盖日常操作：
+
+### Chat — 对话
+
+![Chat 空页](doc/screenshots/chat-page-empty.png)
+
+左侧选择 Agent，右侧输入消息开始对话。流式输出，支持 Markdown 渲染。
+
+![Chat 对话](doc/screenshots/chat-page-conversation.png)
+
+### Agents — Agent 管理
+
+![Agents 页面](doc/screenshots/agents-page.png)
+
+查看、编辑所有 Agent 配置：模型、路由规则、子 Agent 绑定。修改后自动热更新，无需重启。
+
+### Config — 配置管理
+
+![Config 页面](doc/screenshots/config-page.png)
+
+管理工具、子 Agent、路由等运行时配置。
+
+### Observe — 可观测性
+
+![Observe 页面](doc/screenshots/observe-page.png)
+
+实时查看请求日志、trace 链路、节点状态。
+
+### Runtime — 运行时状态
+
+![Runtime 页面](doc/screenshots/runtime-page.png)
+
+查看当前内存中加载的工具、子 Agent、Agent 实例——即实际生效的运行时配置。
+
 ---
 
 ## 三层架构

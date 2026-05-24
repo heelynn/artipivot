@@ -6,9 +6,9 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from artipivot.api.deps import (
-    get_config_center, get_plugin_manager, get_rate_limiter,
-    get_agent_registry, get_gateway, get_sub_agent_registry,
-    get_tool_reloader, get_storage_provider,
+    get_config_center, get_config_service, get_plugin_manager,
+    get_rate_limiter, get_agent_registry, get_gateway,
+    get_sub_agent_registry, get_tool_reloader, get_storage_provider,
 )
 from artipivot.config.ratelimit import RateLimiter
 from artipivot.plugins.manager import PluginDocument, PluginManager
@@ -296,31 +296,29 @@ async def get_graph_structure(agent_id: str):
     return {"agent_id": agent_id, "graphs": agent_def.to_dict().get("graph_sub_agents", {})}
 
 
-# ── Dynamic agent registration ──
+    # ── Agent management (ConfigService-backed) ──
 
 
 class AgentRegisterDTO(BaseModel):
     agent_id: str
     model: dict = {}
     sub_agent_refs: list[str] = []
-    routing: dict = {}  # {"intents": {...}, "confidence_threshold": 0.7}
+    routing: dict = {}
     tools: list[str] = []
     prompts: dict[str, str] = {}
 
 
 @admin_router.post("/agents")
 async def register_agent(request: Request):
-    """Dynamically register a new main agent at runtime. Accepts YAML or JSON."""
+    """Register a new agent. Persists via ConfigService + registers in memory."""
     body = await _parse_yaml_or_json(request)
     dto = AgentRegisterDTO(**body)
     from artipivot.gateway.agent_def import AgentDef
 
-    registry = get_agent_registry()
-    if registry.get_def(dto.agent_id) is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Agent '{dto.agent_id}' already registered",
-        )
+    cs = get_config_service()
+    existing = await cs.get_agent(dto.agent_id)
+    if existing is not None:
+        raise HTTPException(status_code=409, detail=f"Agent '{dto.agent_id}' already registered")
 
     routing = dto.routing
     intent_map = routing.get("intents", {})
@@ -336,6 +334,10 @@ async def register_agent(request: Request):
         prompts=dto.prompts,
     )
 
+    agent_data = agent_def.to_dict()
+    await cs.save_agent(dto.agent_id, agent_data)
+
+    registry = get_agent_registry()
     try:
         registry.register_def(agent_def)
     except ValueError as e:
@@ -346,15 +348,23 @@ async def register_agent(request: Request):
 
 @admin_router.get("/agents")
 async def list_agents():
-    """List all registered main agents."""
+    """List all agents from ConfigService + in-memory registry."""
+    cs = get_config_service()
+    ids = set(await cs.list_agents())
     registry = get_agent_registry()
-    agent_ids = registry.list_agents()
-    return {"agents": agent_ids}
+    for aid in registry.list_agents():
+        ids.add(aid)
+    return {"agents": sorted(ids)}
 
 
 @admin_router.get("/agents/{agent_id}")
 async def get_agent(agent_id: str):
-    """Get agent definition."""
+    """Get agent — ConfigService first, fallback to in-memory."""
+    cs = get_config_service()
+    data = await cs.get_agent(agent_id)
+    if data is not None:
+        return data
+
     registry = get_agent_registry()
     agent_def = registry.get_def(agent_id)
     if agent_def is None:
@@ -362,18 +372,109 @@ async def get_agent(agent_id: str):
     return agent_def.to_dict()
 
 
+class AgentUpdateDTO(BaseModel):
+    model: dict | None = None
+    confidence_threshold: float | None = None
+    intent_map: dict | None = None  # str→str or str→{target,description}
+    prompts: dict[str, str] | None = None
+    tools: list[str] | None = None
+    sub_agent_refs: list | None = None  # list of str | dict
+    circuit: dict | None = None
+
+
+@admin_router.put("/agents/{agent_id}")
+async def update_agent(agent_id: str, dto: AgentUpdateDTO):
+    """Update agent config. Persists via ConfigService + hot-reloads memory."""
+    registry = get_agent_registry()
+    agent_def = registry.get_def(agent_id)
+
+    updates = {}
+    if dto.model is not None:
+        updates["model"] = dto.model
+    if dto.confidence_threshold is not None:
+        updates["confidence_threshold"] = dto.confidence_threshold
+    if dto.intent_map is not None:
+        updates["intent_map"] = dto.intent_map
+    if dto.prompts is not None:
+        updates["prompts"] = dto.prompts
+    if dto.tools is not None:
+        updates["tools"] = dto.tools
+    if dto.sub_agent_refs is not None:
+        updates["sub_agent_refs"] = dto.sub_agent_refs
+    if dto.circuit is not None:
+        updates["circuit"] = dto.circuit
+
+    # Update in-memory if registered
+    if agent_def is not None:
+        if dto.model is not None:
+            agent_def.model = dto.model
+        if dto.confidence_threshold is not None:
+            agent_def.confidence_threshold = dto.confidence_threshold
+        if dto.intent_map is not None:
+            agent_def.intent_map = dto.intent_map
+        if dto.prompts is not None:
+            agent_def.prompts = dto.prompts
+        if dto.tools is not None:
+            agent_def.tools = dto.tools
+        if dto.sub_agent_refs is not None:
+            agent_def.sub_agent_refs = dto.sub_agent_refs
+        if dto.circuit is not None:
+            c = dto.circuit
+            if "enabled" in c:
+                agent_def.circuit.enabled = c["enabled"]
+            if "failure_threshold" in c:
+                agent_def.circuit.failure_threshold = c["failure_threshold"]
+            if "recovery_timeout" in c:
+                agent_def.circuit.recovery_timeout = c["recovery_timeout"]
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    cs = get_config_service()
+    try:
+        updated = await cs.update_agent_fields(agent_id, updates)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    if "tools" in updated and agent_def is not None:
+        try:
+            await registry.rebuild_agent(agent_id)
+        except Exception:
+            pass
+
+    return {"status": "updated", "agent_id": agent_id, "fields": updated}
+
+
+@admin_router.delete("/agents/{agent_id}")
+async def delete_agent(agent_id: str):
+    """Delete an agent from ConfigService and unregister from memory."""
+    cs = get_config_service()
+    try:
+        await cs.delete_agent(agent_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    registry = get_agent_registry()
+    try:
+        registry._defs.pop(agent_id, None)
+        registry._gateway._graphs.pop(agent_id, None)
+    except Exception:
+        pass
+
+    return {"status": "deleted", "agent_id": agent_id}
+
+
 # ── Tools CRUD ──
 
 
 @admin_router.get("/tools")
 async def list_tools():
-    """List all registered tools (name, type, module, status)."""
+    """List all tools — DocumentStore records + in-memory registry."""
     from artipivot.api.deps import get_tool_registry
+    cs = get_config_service()
+    records = await cs.list_tools()
     tools = get_tool_registry()
-    sp = get_storage_provider()
-    store = sp.document_store
-    records = await store.query("tools", {})
-    # Merge with in-memory registry to show stub status
+
     result = []
     seen = set()
     for record in records:
@@ -385,10 +486,10 @@ async def list_tools():
             "type": record.get("type", "builtin"),
             "module": record.get("module"),
             "function": record.get("function"),
+            "config": record.get("config", {}),
             "status": record.get("status", "active"),
             "is_stub": not in_registry,
         })
-    # Include tools in registry but not in store (builtins)
     for name in tools.names:
         if name not in seen:
             result.append({
@@ -396,6 +497,7 @@ async def list_tools():
                 "type": "builtin",
                 "module": None,
                 "function": None,
+                "config": {},
                 "status": "active",
                 "is_stub": False,
             })
@@ -404,44 +506,22 @@ async def list_tools():
 
 @admin_router.post("/tools")
 async def create_tool(request: Request):
-    """Register or update a single tool record. Accepts YAML or JSON body.
-
-    YAML example:
-        name: baidu_search
-        type: module
-        module: my_pkg.tools.search
-        function: baidu_search
-
-    Writing triggers ChangeNotifier → ToolWatcher → ToolReloader → graph rebuild.
-    """
+    """Register or update a tool record. Accepts YAML or JSON."""
     body = await _parse_yaml_or_json(request)
     dto = ToolDTO(**body)
-
-    sp = get_storage_provider()
-    store = sp.document_store
-    notifier = sp.change_notifier
-
-    data = dto.model_dump()
-    await store.put("tools", dto.name, data)
-    await notifier.notify("tools", dto.name, "upsert", data)
-
+    cs = get_config_service()
+    await cs.save_tool(dto.name, dto.model_dump())
     return {"status": "registered", "name": dto.name}
 
 
 @admin_router.delete("/tools/{name}")
 async def delete_tool(name: str):
-    """Delete a tool record from DocumentStore."""
-    sp = get_storage_provider()
-    store = sp.document_store
-    notifier = sp.change_notifier
-
-    existing = await store.get("tools", name)
-    if existing is None:
-        raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
-
-    await store.delete("tools", name)
-    await notifier.notify("tools", name, "delete", {"name": name})
-
+    """Delete a tool record."""
+    cs = get_config_service()
+    try:
+        await cs.delete_tool(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     return {"status": "deleted", "name": name}
 
 
@@ -450,25 +530,14 @@ async def delete_tool(name: str):
 
 @admin_router.get("/sub-agents")
 async def list_sub_agents():
-    """List all sub-agent records from DocumentStore."""
-    sp = get_storage_provider()
-    store = sp.document_store
-    records = await store.query("sub_agents", {})
-    return [
-        {
-            "name": r.get("name"),
-            "strategy": r.get("strategy", "react"),
-            "tools": r.get("tools", []),
-            "system_prompt": r.get("system_prompt", ""),
-            "status": r.get("status", "active"),
-        }
-        for r in records
-    ]
+    """List all sub-agent records."""
+    cs = get_config_service()
+    return await cs.list_sub_agents()
 
 
 @admin_router.post("/sub-agents")
 async def create_sub_agent(request: Request):
-    """Write a sub-agent record. Accepts YAML or JSON body.
+    """Write a sub-agent record. Accepts YAML or JSON.
 
     YAML example:
         name: code_writer
@@ -477,37 +546,22 @@ async def create_sub_agent(request: Request):
           - web_search
           - code_exec
         system_prompt: You are a coding assistant.
-
-    Writing triggers ChangeNotifier — PluginWatcher rebuilds affected agents.
     """
     body = await _parse_yaml_or_json(request)
     dto = SubAgentDTO(**body)
-
-    sp = get_storage_provider()
-    store = sp.document_store
-    notifier = sp.change_notifier
-
-    data = dto.model_dump()
-    await store.put("sub_agents", dto.name, data)
-    await notifier.notify("sub_agents", dto.name, "upsert", data)
-
+    cs = get_config_service()
+    await cs.save_sub_agent(dto.name, dto.model_dump())
     return {"status": "registered", "name": dto.name}
 
 
 @admin_router.delete("/sub-agents/{name}")
 async def delete_sub_agent(name: str):
-    """Delete a sub-agent record from DocumentStore."""
-    sp = get_storage_provider()
-    store = sp.document_store
-    notifier = sp.change_notifier
-
-    existing = await store.get("sub_agents", name)
-    if existing is None:
-        raise HTTPException(status_code=404, detail=f"Sub-agent '{name}' not found")
-
-    await store.delete("sub_agents", name)
-    await notifier.notify("sub_agents", name, "delete", {"name": name})
-
+    """Delete a sub-agent record."""
+    cs = get_config_service()
+    try:
+        await cs.delete_sub_agent(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     return {"status": "deleted", "name": name}
 
 
@@ -516,49 +570,92 @@ async def delete_sub_agent(name: str):
 
 @admin_router.get("/agents/{agent_id}/circuit")
 async def get_circuit_status(agent_id: str):
-    """Get circuit breaker status for an agent's LLM providers."""
+    """Get circuit breaker status. Checks in-memory first, then ConfigService."""
     registry = get_agent_registry()
     agent_def = registry.get_def(agent_id)
-    if agent_def is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
-
-    from artipivot.models.provider import ModelProvider
-    # Read circuit state from the ModelProvider's circuit registry
-    # For now return the config — runtime state requires CircuitRegistry access
-    return {
-        "agent_id": agent_id,
-        "circuit": {
-            "enabled": agent_def.circuit.enabled,
-            "failure_threshold": agent_def.circuit.failure_threshold,
-            "recovery_timeout": agent_def.circuit.recovery_timeout,
-        },
-    }
+    if agent_def is not None:
+        return {
+            "agent_id": agent_id,
+            "circuit": {
+                "enabled": agent_def.circuit.enabled,
+                "failure_threshold": agent_def.circuit.failure_threshold,
+                "recovery_timeout": agent_def.circuit.recovery_timeout,
+            },
+        }
+    cs = get_config_service()
+    data = await cs.get_agent_circuit(agent_id)
+    if data is not None:
+        return data
+    raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
 
 @admin_router.post("/agents/{agent_id}/circuit")
 async def update_circuit_config(agent_id: str, request: Request):
-    """Update circuit breaker config for an agent (hot-reload, no graph rebuild)."""
+    """Update circuit breaker config via ConfigService."""
+    body = await _parse_yaml_or_json(request)
+    cs = get_config_service()
+    try:
+        await cs.update_agent_fields(agent_id, {"circuit": body})
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     registry = get_agent_registry()
     agent_def = registry.get_def(agent_id)
-    if agent_def is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+    if agent_def is not None:
+        if "enabled" in body:
+            agent_def.circuit.enabled = body["enabled"]
+        if "failure_threshold" in body:
+            agent_def.circuit.failure_threshold = body["failure_threshold"]
+        if "recovery_timeout" in body:
+            agent_def.circuit.recovery_timeout = body["recovery_timeout"]
+    return {"status": "updated", "agent_id": agent_id, "circuit": body}
 
-    body = await _parse_yaml_or_json(request)
-    if "enabled" in body:
-        agent_def.circuit.enabled = body["enabled"]
-    if "failure_threshold" in body:
-        agent_def.circuit.failure_threshold = body["failure_threshold"]
-    if "recovery_timeout" in body:
-        agent_def.circuit.recovery_timeout = body["recovery_timeout"]
 
-    # Push updated config to ModelProvider
-    from artipivot.api.deps import get_gateway
-    gw = get_gateway()
-    if gw and hasattr(gw._model_provider, "set_circuit_config"):
-        gw._model_provider.set_circuit_config(agent_id, agent_def.circuit)
+# ── Runtime observation (read-only) ──
 
-    return {"status": "updated", "agent_id": agent_id, "circuit": {
-        "enabled": agent_def.circuit.enabled,
-        "failure_threshold": agent_def.circuit.failure_threshold,
-        "recovery_timeout": agent_def.circuit.recovery_timeout,
-    }}
+
+@admin_router.get("/runtime/tools")
+async def list_runtime_tools():
+    """List tools currently loaded in the in-memory ToolRegistry."""
+    from artipivot.api.deps import get_tool_registry
+    tools = get_tool_registry()
+    result = []
+    for name in tools.names:
+        tool = tools.get(name)
+        result.append({
+            "name": name,
+            "type": "builtin",
+            "description": tool.description if tool else "",
+        })
+    return result
+
+
+@admin_router.get("/runtime/sub-agents")
+async def list_runtime_sub_agents():
+    """List sub-agents currently loaded in the in-memory SubAgentRegistry."""
+    from artipivot.api.deps import get_sub_agent_registry
+    sar = get_sub_agent_registry()
+    result = []
+    for name in sar.list_sub_agents():
+        defn = sar.get_def(name)
+        strategy = ""
+        tools_list: list[str] = []
+        system_prompt = ""
+        strategy_config = {}
+        if hasattr(defn, "strategy"):
+            strategy = defn.strategy
+        if hasattr(defn, "tools"):
+            tools_list = defn.tools
+        if hasattr(defn, "system_prompt"):
+            system_prompt = defn.system_prompt
+        if hasattr(defn, "strategy_config"):
+            strategy_config = defn.strategy_config
+        result.append({
+            "name": name,
+            "strategy": strategy or "dsl",
+            "tools": tools_list,
+            "system_prompt": system_prompt,
+            "strategy_config": strategy_config,
+        })
+    return result
+
+

@@ -1,0 +1,3 @@
+[     225ms] [ERROR] Failed to load agents: SyntaxError: Unexpected token '<', "<!doctype "... is not valid JSON @ http://localhost:8000/assets/index-BVjejCSb.js:91
+[  160207ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/favicon.svg:0
+[  160207ms] [ERROR] Failed to load agents: SyntaxError: Unexpected token '<', "<!doctype "... is not valid JSON @ http://localhost:8000/assets/index-BVjejCSb.js:91

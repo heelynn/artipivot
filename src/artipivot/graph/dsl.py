@@ -152,6 +152,27 @@ class GraphDef:
     edges: list[EdgeDef]
     max_iterations: int | None = None
 
+    def to_dict(self) -> dict:
+        """Serialize to dict compatible with parse_graph_def()."""
+        from dataclasses import asdict
+
+        nodes_dict = {}
+        for n, nd in self.nodes.items():
+            d = {k: v for k, v in asdict(nd).items() if v is not None and k != "name"}
+            nodes_dict[n] = d
+        edges_list = []
+        for e in self.edges:
+            d = {"from": e.source}
+            if e.target is not None:
+                d["to"] = e.target
+            if e.targets:
+                d["targets"] = e.targets
+            edges_list.append(d)
+        result = {"nodes": nodes_dict, "edges": edges_list}
+        if self.max_iterations is not None:
+            result["max_iterations"] = self.max_iterations
+        return result
+
 
 # ── Parsing ──
 

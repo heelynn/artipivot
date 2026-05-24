@@ -80,11 +80,47 @@ class BackendFactory(ABC):
 
 
 class MemoryFactory(BackendFactory):
-    """Built-in memory backend — zero dependencies, all storage types."""
+    """Pure in-memory backend — no disk persistence, zero dependencies."""
 
     @property
     def name(self) -> str:
         return "memory"
+
+    def supports(self, type: str) -> bool:
+        return type in ALL_TYPES
+
+    def create(self, type: str, config: dict) -> Any:
+        self._check_supports(type)
+
+        if type == TYPE_CHECKPOINTER:
+            from langgraph.checkpoint.memory import InMemorySaver
+            return InMemorySaver()
+
+        if type == TYPE_STORE:
+            from langgraph.store.memory import InMemoryStore
+            return InMemoryStore()
+
+        if type == TYPE_DOCUMENT_STORE:
+            from artipivot.storage.memory import InMemoryDocumentStore
+            return InMemoryDocumentStore()
+
+        if type == TYPE_CHANGE_NOTIFIER:
+            from artipivot.storage.memory import InProcessNotifier
+            return InProcessNotifier()
+
+        raise ValueError(f"Unknown type: {type}")
+
+
+class SqliteFactory(BackendFactory):
+    """SQLite backend — local file persistence.
+
+    Creates SQLite-backed DocumentStore with polling change notifier.
+    Checkpointer and Store remain in-memory (LangGraph built-in).
+    """
+
+    @property
+    def name(self) -> str:
+        return "sqlite"
 
     def supports(self, type: str) -> bool:
         return type in ALL_TYPES

@@ -1,9 +1,9 @@
 """Bootstrap — one-call initialization for CLI server startup.
 
-Loads .env, reads agents.yaml directly into AgentManifest, initializes all
-components, builds agents, and returns a ready-to-serve FastAPI app.
+Loads .env, reads global model + memory config from YAML, loads all
+agents/tools/sub-agents from DocumentStore (DB), and returns a ready app.
 
-No DocumentStore round-trip — YAML is the source of truth on every startup.
+DocumentStore (SQLite) is the source of truth for agents, tools, sub-agents.
 
 Usage:
     from artipivot.bootstrap import bootstrap
@@ -132,64 +132,21 @@ async def bootstrap(
     config_center.load_from_manifest(manifest)
     await config_center.start()
 
-    # ── 7. ToolRegistry — from YAML (CLI) or DocumentStore ─────
+    # ── 7. ToolRegistry — always from DocumentStore ────────────
     tool_registry = ToolRegistry()
-    if manifest.tools:
-        # CLI / YAML mode: load tools directly from manifest
-        tool_registry.register_from_manifest(
-            manifest.tools, include_builtins=register_builtin_tools,
-        )
-        _log.info("bootstrap.tools_from_yaml", count=len(tool_registry.names))
-    else:
-        # Server mode: load from DocumentStore (may be empty)
-        await tool_registry.load_from_store(
-            storage.document_store,
-            include_builtins=register_builtin_tools,
-        )
-        _log.info("bootstrap.tools_from_store", count=len(tool_registry.names))
+    await tool_registry.load_from_store(
+        storage.document_store,
+        include_builtins=register_builtin_tools,
+    )
+    _log.info("bootstrap.tools_from_store", count=len(tool_registry.names))
 
-    # ── 8. SubAgentRegistry — from YAML (CLI) or DocumentStore ──
+    # ── 8. SubAgentRegistry — always from DocumentStore ────────
     sub_agent_registry = SubAgentRegistry(
         tool_registry,
         model_provider=model_provider,
     )
-    if manifest.sub_agents:
-        # CLI / YAML mode: build sub-agents directly from manifest
-        for sd in manifest.sub_agents:
-            from artipivot.agents.declarative import (
-                DeclarativeSubAgentDef,
-                build_declarative_subagent,
-            )
-            if sd.graph:
-                from artipivot.graph.dsl import parse_graph_def, build_dsl_graph
-                gd = parse_graph_def(sd.name, sd.graph)
-                graph = build_dsl_graph(
-                    gd,
-                    tool_registry=tool_registry,
-                    model_provider=model_provider,
-                )
-                sub_agent_registry.register(sd.name, graph)
-            else:
-                defn = DeclarativeSubAgentDef(
-                    name=sd.name,
-                    strategy=sd.strategy,
-                    tools=sd.tools,
-                    system_prompt=sd.system_prompt,
-                    strategy_config=sd.strategy_config,
-                )
-                tool_node = tool_registry.get_tool_node(sd.tools)
-                graph = build_declarative_subagent(defn, tool_node)
-                sub_agent_registry.register(sd.name, graph, defn=defn)
-        _log.info("bootstrap.sub_agents_from_yaml", count=len(manifest.sub_agents))
-    else:
-        # Server mode: load from DocumentStore (may be empty)
-        await sub_agent_registry.load_from_store(storage.document_store)
-        _log.info("bootstrap.sub_agents_from_store")
-
-    # Also register any inline sub-agents from agent definitions
-    sub_agent_registry.register_from_manifest(manifest.agents)
-
-    _log.info("bootstrap.sub_agents_built", count=len(sub_agent_registry.list_sub_agents()))
+    await sub_agent_registry.load_from_store(storage.document_store)
+    _log.info("bootstrap.sub_agents_from_store")
 
     # ── 9. Gateway + GraphFactory + AgentRegistry ───────────────
     # L2/L3 controlled by memory_config
@@ -211,7 +168,27 @@ async def bootstrap(
         sub_agent_registry=sub_agent_registry,
     )
 
-    for agent_def in manifest.agents.values():
+    # ── 9a. Load agents from DocumentStore ────────────────────────
+    agent_records = await storage.document_store.query("agents", {})
+    agents_from_db: dict[str, AgentDef] = {}
+    for data in agent_records:
+        try:
+            agent_def = AgentDef.from_dict(data)
+            agents_from_db[agent_def.agent_id] = agent_def
+        except Exception:
+            _log.error(
+                "bootstrap.agent_parse_failed",
+                data=data,
+                exc_info=True,
+            )
+
+    _log.info("bootstrap.agents_from_store", count=len(agents_from_db))
+
+    # Register inline sub-agents from agent definitions
+    sub_agent_registry.register_from_manifest(agents_from_db)
+    _log.info("bootstrap.sub_agents_built", count=len(sub_agent_registry.list_sub_agents()))
+
+    for agent_def in agents_from_db.values():
         try:
             agent_registry.register_def(
                 agent_def,
@@ -242,17 +219,76 @@ async def bootstrap(
     await tool_watcher.start()
     _log.info("bootstrap.tool_watcher_started")
 
-    # ── 10. RateLimiter + PluginManager ─────────────────────────
+    # ── 9c. ConfigWatcher — hot-reload agents/tools/sub-agents on change ──
+    async def _on_agent_change(
+        collection: str, key: str, action: str, data: dict
+    ) -> None:
+        """Rebuild a single agent when its config changes.
+
+        Reloads the agent from DocumentStore (includes inline sub-agent
+        definitions that may have changed), re-registers with updated AgentDef,
+        and triggers graph rebuild.
+        """
+        agent_id = data.get("agent_id") or key
+        if not agent_id or action == "delete":
+            return
+        _log.info("config_watcher.agent_changed", agent_id=agent_id)
+
+        # Reload agent from DB — this is the source of truth including
+        # inline sub-agent definitions stored in sub_agent_refs
+        agent_data = await storage.document_store.get("agents", agent_id)
+        if agent_data is not None:
+            try:
+                agent_def = AgentDef.from_dict(agent_data)
+                # Register the updated definitions (updates SubAgentRegistry)
+                sub_agent_registry.register_from_manifest({agent_id: agent_def})
+                # Re-register with updated AgentDef + rebuild graph
+                agent_registry._defs[agent_id] = agent_def
+                await agent_registry.rebuild_agent(agent_id, checkpointer=checkpointer, store=lg_store)
+            except Exception:
+                _log.error("config_watcher.rebuild_failed", agent_id=agent_id, exc_info=True)
+        else:
+            _log.warning("config_watcher.agent_not_in_db", agent_id=agent_id)
+
+    async def _on_sub_agent_change(
+        collection: str, key: str, action: str, data: dict
+    ) -> None:
+        """Reload sub-agents into registry, rebuild affected agents."""
+        name = data.get("name") or key
+        if not name:
+            return
+        _log.info("config_watcher.sub_agent_changed", name=name, action=action)
+        await sub_agent_registry.load_from_store(storage.document_store)
+        # Rebuild agents that reference the changed sub-agent
+        for aid in agent_registry.list_agents():
+            agent_def = agent_registry.get_def(aid)
+            if agent_def and name in agent_def.sub_agent_refs:
+                try:
+                    await agent_registry.rebuild_agent(aid, checkpointer=checkpointer, store=lg_store)
+                except Exception:
+                    _log.error("config_watcher.rebuild_failed", agent_id=aid, exc_info=True)
+
+    await storage.change_notifier.subscribe("agents", _on_agent_change)
+    await storage.change_notifier.subscribe("sub_agents", _on_sub_agent_change)
+    _log.info("bootstrap.config_watcher_started")
+
+    # ── 10. ConfigService ───────────────────────────────────────
+    from artipivot.config.service import ConfigService
+
+    config_service = ConfigService(storage.document_store, storage.change_notifier)
+
+    # ── 11. RateLimiter + PluginManager ─────────────────────────
     rate_limiter = RateLimiter()
     plugin_manager = PluginManager(
         store=storage.document_store,
         notifier=storage.change_notifier,
     )
 
-    # ── 11. Wire up FastAPI dependencies ────────────────────────
+    # ── 12. Wire up FastAPI dependencies ────────────────────────
     set_components(
         gateway=gateway,
         config_center=config_center,
+        config_service=config_service,
         plugin_manager=plugin_manager,
         rate_limiter=rate_limiter,
         tool_registry=tool_registry,
@@ -263,7 +299,18 @@ async def bootstrap(
         memory_config=memory_config,
     )
 
-    return create_app()
+    app = create_app()
+
+    # ── 13. Restart PollingChangeNotifier in uvicorn event loop ──
+    # Polling tasks were created in asyncio.run() loop which dies on return.
+    # Restart in the FastAPI lifespan so tasks run in uvicorn's loop.
+    if hasattr(storage.change_notifier, "start"):
+        @app.on_event("startup")
+        async def _restart_notifier():
+            await storage.change_notifier.start()
+            _log.info("bootstrap.notifier_restarted_in_uvicorn")
+
+    return app
 
 
 # ── Helpers ──

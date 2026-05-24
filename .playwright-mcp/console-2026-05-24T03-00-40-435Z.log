@@ -1,0 +1,2 @@
+[     114ms] [ERROR] Failed to load agents: SyntaxError: Unexpected token '<', "<!doctype "... is not valid JSON @ http://localhost:8000/assets/index-wdCYmxsz.js:91
+[   73281ms] [ERROR] Failed to load agents: SyntaxError: Unexpected token '<', "<!doctype "... is not valid JSON @ http://localhost:8000/assets/index-wdCYmxsz.js:91

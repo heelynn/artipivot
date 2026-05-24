@@ -166,8 +166,23 @@ class AgentGateway:
         finally:
             clear_trace()
 
-    async def stream(self, agent_id: str, message: str, thread_id: str, *, user_id: str = "default_user", memory_config=None):
-        """Stream responses from the agent's graph."""
+    async def stream(
+        self,
+        agent_id: str,
+        message: str,
+        thread_id: str,
+        *,
+        user_id: str = "default_user",
+        memory_config=None,
+        stream_mode: str = "messages",
+    ):
+        """Stream responses from the agent's graph.
+
+        Args:
+            stream_mode: LangGraph stream mode. Default "messages" yields
+                (message_chunk, metadata) tuples for token-level streaming.
+                Use "values" for full state snapshots per node.
+        """
         if agent_id not in self._graphs:
             raise ValueError(f"Unknown agent: {agent_id}")
 
@@ -177,7 +192,7 @@ class AgentGateway:
 
         bind_trace_id(trace_id, agent_id=agent_id, user_id=user_id, thread_id=full_thread_id)
 
-        log.info("gateway.request", mode="stream", message=_truncate(message))
+        log.info("gateway.request", mode="stream", stream_mode=stream_mode, message=_truncate(message))
         t0 = time.perf_counter()
 
         model = self._model_provider.get_model(agent_id, user_id=user_id)
@@ -188,18 +203,21 @@ class AgentGateway:
             "callbacks": [self._callback],
         }
 
+        ctx = AgentContext(
+            agent_id=agent_id,
+            user_id=user_id,
+            thread_id=full_thread_id,
+            model=model,
+            config_center=self._config_center,
+            memory_config=memory_config,
+        )
+
         try:
             async for chunk in graph.astream(
                 {"messages": [{"role": "user", "content": message}]},
                 config,
-                context=AgentContext(
-                    agent_id=agent_id,
-                    user_id=user_id,
-                    thread_id=full_thread_id,
-                    model=model,
-                    config_center=self._config_center,
-                    memory_config=memory_config,
-                ),
+                context=ctx,
+                stream_mode=stream_mode,
             ):
                 yield chunk
             elapsed = int((time.perf_counter() - t0) * 1000)

@@ -1,0 +1,51 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: ArtiPivot
+      - button [ref=e7]:
+        - img [ref=e8]
+    - navigation [ref=e11]:
+      - link "Chat" [ref=e12] [cursor=pointer]:
+        - /url: /
+        - img [ref=e13]
+        - generic [ref=e15]: Chat
+      - link "Agents" [ref=e16] [cursor=pointer]:
+        - /url: /admin/agents
+        - img [ref=e17]
+        - generic [ref=e20]: Agents
+      - link "Config" [ref=e21] [cursor=pointer]:
+        - /url: /admin/config
+        - img [ref=e22]
+        - generic [ref=e25]: Config
+      - link "Observe" [ref=e26] [cursor=pointer]:
+        - /url: /admin/observe
+        - img [ref=e27]
+        - generic [ref=e29]: Observe
+    - button "Dark" [ref=e31]:
+      - img [ref=e32]
+      - generic [ref=e34]: Dark
+  - main [ref=e35]:
+    - generic [ref=e36]:
+      - generic [ref=e37]:
+        - generic [ref=e38]:
+          - generic [ref=e39]: Agents
+          - button [ref=e40]:
+            - img [ref=e41]
+        - button "code_agent" [ref=e61]:
+          - img [ref=e62]
+          - generic [ref=e65]: code_agent
+      - generic [ref=e45]:
+        - generic [ref=e47]:
+          - generic [ref=e67]:
+            - img [ref=e69]
+            - paragraph [ref=e73]: 现在几点了
+          - generic [ref=e74]:
+            - img [ref=e76]
+            - paragraph [ref=e81]:
+              - text: 2026-05-24 10:27:19当前时间是
+              - strong [ref=e82]: 2026年5月24日 10:27:19
+              - text: 。
+        - generic [ref=e55]:
+          - textbox "Message code_agent..." [ref=e66]
+          - button [disabled] [ref=e57]:
+            - img [ref=e58]

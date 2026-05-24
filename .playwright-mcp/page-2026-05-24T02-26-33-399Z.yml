@@ -1,0 +1,41 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: ArtiPivot
+      - button [ref=e7]:
+        - img [ref=e8]
+    - navigation [ref=e11]:
+      - link "Chat" [ref=e12] [cursor=pointer]:
+        - /url: /
+        - img [ref=e13]
+        - generic [ref=e15]: Chat
+      - link "Agents" [ref=e16] [cursor=pointer]:
+        - /url: /admin/agents
+        - img [ref=e17]
+        - generic [ref=e20]: Agents
+      - link "Config" [ref=e21] [cursor=pointer]:
+        - /url: /admin/config
+        - img [ref=e22]
+        - generic [ref=e25]: Config
+      - link "Observe" [ref=e26] [cursor=pointer]:
+        - /url: /admin/observe
+        - img [ref=e27]
+        - generic [ref=e29]: Observe
+    - button "Dark" [ref=e31]:
+      - img [ref=e32]
+      - generic [ref=e34]: Dark
+  - main [ref=e35]:
+    - generic [ref=e36]:
+      - generic [ref=e38]:
+        - generic [ref=e39]: Agents
+        - button [ref=e40]:
+          - img [ref=e41]
+      - generic [ref=e45]:
+        - generic [ref=e48]:
+          - img [ref=e49]
+          - heading "ArtiPivot Chat" [level=2] [ref=e52]
+          - paragraph [ref=e53]: Select an agent and start a conversation
+        - generic [ref=e55]:
+          - textbox "Select an agent first..." [disabled] [ref=e56]
+          - button [disabled] [ref=e57]:
+            - img [ref=e58]

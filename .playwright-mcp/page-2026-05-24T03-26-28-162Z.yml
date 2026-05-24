@@ -1,0 +1,92 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: ArtiPivot
+      - button [ref=e7]:
+        - img [ref=e8]
+    - navigation [ref=e11]:
+      - link "Chat" [ref=e12] [cursor=pointer]:
+        - /url: /
+        - img [ref=e13]
+        - generic [ref=e15]: Chat
+      - link "Agents" [ref=e16] [cursor=pointer]:
+        - /url: /admin/agents
+        - img [ref=e17]
+        - generic [ref=e20]: Agents
+      - link "Config" [ref=e21] [cursor=pointer]:
+        - /url: /admin/config
+        - img [ref=e22]
+        - generic [ref=e25]: Config
+      - link "Observe" [ref=e26] [cursor=pointer]:
+        - /url: /admin/observe
+        - img [ref=e27]
+        - generic [ref=e29]: Observe
+    - button "Dark" [ref=e31]:
+      - img [ref=e32]
+      - generic [ref=e34]: Dark
+  - main [ref=e35]:
+    - generic [ref=e37]:
+      - heading "Configuration" [level=1] [ref=e38]
+      - paragraph [ref=e39]: Manage models, routing, rate limits, tools, and sub-agents
+      - generic [ref=e40]:
+        - tablist [ref=e41]:
+          - tab "Tools" [selected] [ref=e42]
+          - tab "Sub-Agents" [ref=e43]
+          - tab "Rate Limits" [ref=e44]
+          - tab "Runtime" [ref=e45]
+        - tabpanel "Tools" [ref=e46]:
+          - button "Add Tool" [ref=e48]:
+            - img
+            - text: Add Tool
+          - table [ref=e51]:
+            - rowgroup [ref=e52]:
+              - row "Name Type Module Status" [ref=e53]:
+                - columnheader [ref=e54]
+                - columnheader "Name" [ref=e55]
+                - columnheader "Type" [ref=e56]
+                - columnheader "Module" [ref=e57]
+                - columnheader "Status" [ref=e58]
+                - columnheader [ref=e59]
+            - rowgroup [ref=e60]:
+              - row "echo builtin - active" [ref=e61] [cursor=pointer]:
+                - cell [ref=e62]:
+                  - img [ref=e63]
+                - cell "echo" [ref=e65]
+                - cell "builtin" [ref=e66]
+                - cell "-" [ref=e67]
+                - cell "active" [ref=e68]:
+                  - generic [ref=e69]: active
+                - cell [ref=e70]:
+                  - generic [ref=e71]:
+                    - button [ref=e72]:
+                      - img
+                    - button [ref=e73]:
+                      - img
+              - row "current_time builtin - active" [ref=e74] [cursor=pointer]:
+                - cell [ref=e75]:
+                  - img [ref=e76]
+                - cell "current_time" [ref=e78]
+                - cell "builtin" [ref=e79]
+                - cell "-" [ref=e80]
+                - cell "active" [ref=e81]:
+                  - generic [ref=e82]: active
+                - cell [ref=e83]:
+                  - generic [ref=e84]:
+                    - button [ref=e85]:
+                      - img
+                    - button [ref=e86]:
+                      - img
+              - row "file_io builtin - active" [ref=e87] [cursor=pointer]:
+                - cell [ref=e88]:
+                  - img [ref=e89]
+                - cell "file_io" [ref=e91]
+                - cell "builtin" [ref=e92]
+                - cell "-" [ref=e93]
+                - cell "active" [ref=e94]:
+                  - generic [ref=e95]: active
+                - cell [ref=e96]:
+                  - generic [ref=e97]:
+                    - button [ref=e98]:
+                      - img
+                    - button [ref=e99]:
+                      - img

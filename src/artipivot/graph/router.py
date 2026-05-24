@@ -26,11 +26,11 @@ classify it into exactly one of the allowed intents listed below.
 仅评估用户意图是否清晰指向某个 allowed intent，不评估意图要执行的具体内容。
 - 0.8–1.0：用户意图明确，与某个 allowed intent 高度匹配
 - 0.5–0.8：用户意图可推断，但表述模糊或存在歧义
-- 0.0–0.5：无法判断用户意图，或消息为寒暄/无意义内容
+- 0.0–0.5：无法判断用户意图，或消息内容完全无法与任何 intent 关联
 
 ## Rules
 1. 先在 reasoning 中完成以下思考：
-   - 提取：用户消息中表达意图的关键词是什么？实际要处理的内容是什么？
+   - 提取：用户消息中表达意图的关键语义是什么？实际要处理的内容是什么？
    - 匹配：意图关键词指向哪个 intent？
    - 评分：仅按意图指向的清晰度评分，不考虑内容是否有意义。
 2. Choose the single best-matching intent from the list above.

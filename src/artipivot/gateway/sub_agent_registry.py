@@ -221,6 +221,7 @@ class SubAgentRegistry:
                     "type": "declarative",
                     "strategy": defn.strategy,
                     "tools": sorted(defn.tools),
+                    "system_prompt": defn.system_prompt,
                     "strategy_config": defn.strategy_config,
                 },
                 sort_keys=True,
@@ -232,6 +233,7 @@ class SubAgentRegistry:
                 {
                     "type": "programmatic",
                     "tools": sorted(defn.tools),
+                    "system_prompt": defn.system_prompt,
                 },
                 sort_keys=True,
             )

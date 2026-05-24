@@ -46,5 +46,13 @@ htmlcov/
 # ArtiPivot local data
 .artipivot/
 
+# Frontend
+web/node_modules/
+web/dist/
+
+# PID files
+.pids
+.pids.win
+
 # Claude Code
 .claude/

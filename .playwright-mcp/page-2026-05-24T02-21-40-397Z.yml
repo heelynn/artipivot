@@ -1,0 +1,48 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: ArtiPivot
+      - button [ref=e7]:
+        - img [ref=e8]
+    - navigation [ref=e11]:
+      - link "Chat" [ref=e12] [cursor=pointer]:
+        - /url: /
+        - img [ref=e13]
+        - generic [ref=e15]: Chat
+      - link "Agents" [ref=e16] [cursor=pointer]:
+        - /url: /admin/agents
+        - img [ref=e17]
+        - generic [ref=e20]: Agents
+      - link "Config" [ref=e21] [cursor=pointer]:
+        - /url: /admin/config
+        - img [ref=e22]
+        - generic [ref=e25]: Config
+      - link "Observe" [ref=e26] [cursor=pointer]:
+        - /url: /admin/observe
+        - img [ref=e27]
+        - generic [ref=e29]: Observe
+    - button "Dark" [ref=e31]:
+      - img [ref=e32]
+      - generic [ref=e34]: Dark
+  - main [ref=e35]:
+    - generic [ref=e252]:
+      - generic [ref=e253]:
+        - generic [ref=e254]:
+          - generic [ref=e255]: Agents
+          - button [ref=e256]:
+            - img [ref=e257]
+        - button "code_agent" [ref=e261]:
+          - img [ref=e262]
+          - generic [ref=e265]: code_agent
+      - generic [ref=e266]:
+        - generic [ref=e268]:
+          - generic [ref=e282]:
+            - img [ref=e284]
+            - paragraph [ref=e288]: hello
+          - generic [ref=e289]:
+            - img [ref=e291]
+            - paragraph [ref=e296]: "{\"reasoning\": \"用户消息仅为问候语'hello'，无明确意图指向代码、时间处理或分析。意图完全模糊，无法匹配任何allowed intent。\", \"intent\": \"analyzer\", \"confidence\": 0.0}"
+        - generic [ref=e276]:
+          - textbox "Message code_agent..." [ref=e277]
+          - button [disabled] [ref=e278]:
+            - img [ref=e279]

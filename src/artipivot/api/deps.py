@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from artipivot.config.center import ConfigCenter
 from artipivot.config.ratelimit import RateLimiter
+from artipivot.config.service import ConfigService
 from artipivot.gateway.gateway import AgentGateway
 from artipivot.gateway.registry import AgentRegistry
 from artipivot.gateway.sub_agent_registry import SubAgentRegistry
@@ -24,6 +25,7 @@ _sub_agent_registry: SubAgentRegistry | None = None
 _storage_provider: StorageProvider | None = None
 _tool_reloader = None
 _memory_config = None
+_config_service: ConfigService | None = None
 
 
 def get_gateway() -> AgentGateway:
@@ -74,6 +76,12 @@ def get_storage_provider() -> StorageProvider:
     return _storage_provider
 
 
+def get_config_service() -> ConfigService:
+    if _config_service is None:
+        raise RuntimeError("App not initialized — call init_app() first")
+    return _config_service
+
+
 def get_tool_reloader():
     """Get the global ToolReloader (may be None if not configured)."""
     return _tool_reloader
@@ -96,9 +104,10 @@ def set_components(
     storage_provider: StorageProvider | None = None,
     tool_reloader=None,
     memory_config=None,
+    config_service: ConfigService | None = None,
 ) -> None:
     """Set shared components — called during app initialization."""
-    global _gateway, _config_center, _plugin_manager, _rate_limiter, _tool_registry, _agent_registry, _sub_agent_registry, _storage_provider, _tool_reloader, _memory_config
+    global _gateway, _config_center, _plugin_manager, _rate_limiter, _tool_registry, _agent_registry, _sub_agent_registry, _storage_provider, _tool_reloader, _memory_config, _config_service
     _gateway = gateway
     _config_center = config_center
     _plugin_manager = plugin_manager
@@ -109,3 +118,4 @@ def set_components(
     _storage_provider = storage_provider
     _tool_reloader = tool_reloader
     _memory_config = memory_config
+    _config_service = config_service

@@ -1,0 +1,53 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: ArtiPivot
+      - button [ref=e7]:
+        - img [ref=e8]
+    - navigation [ref=e11]:
+      - link "Chat" [ref=e12] [cursor=pointer]:
+        - /url: /
+        - img [ref=e13]
+        - generic [ref=e15]: Chat
+      - link "Agents" [ref=e16] [cursor=pointer]:
+        - /url: /admin/agents
+        - img [ref=e17]
+        - generic [ref=e20]: Agents
+      - link "Config" [ref=e21] [cursor=pointer]:
+        - /url: /admin/config
+        - img [ref=e22]
+        - generic [ref=e25]: Config
+      - link "Observe" [ref=e26] [cursor=pointer]:
+        - /url: /admin/observe
+        - img [ref=e27]
+        - generic [ref=e29]: Observe
+      - link "Runtime" [ref=e30] [cursor=pointer]:
+        - /url: /admin/runtime
+        - img [ref=e31]
+        - generic [ref=e34]: Runtime
+    - button "Dark" [ref=e36]:
+      - img [ref=e37]
+      - generic [ref=e39]: Dark
+  - main [ref=e40]:
+    - generic [ref=e42]:
+      - heading "Observability" [level=1] [ref=e43]
+      - paragraph [ref=e44]: Circuit breaker status and graph topology
+      - generic [ref=e45]:
+        - heading "Circuit Breakers" [level=2] [ref=e46]:
+          - img [ref=e47]
+          - text: Circuit Breakers
+        - generic [ref=e49]:
+          - generic [ref=e50]:
+            - generic [ref=e52]: chat_agent
+            - generic [ref=e53]: No circuit breaker
+          - generic [ref=e54]:
+            - generic [ref=e56]: code_agent
+            - generic [ref=e57]: No circuit breaker
+      - generic [ref=e58]:
+        - heading "Graph Topology" [level=2] [ref=e59]:
+          - img [ref=e60]
+          - text: Graph Topology
+        - combobox [ref=e63]:
+          - generic: chat_agent
+          - img [ref=e64]
+        - paragraph [ref=e67]: No graph data available

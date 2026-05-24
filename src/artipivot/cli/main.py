@@ -106,12 +106,30 @@ def serve(
     and starts the server — all in one command.
     """
     from artipivot.bootstrap import bootstrap_sync
+    from pathlib import Path
 
     import os
     resolved = manifest or os.environ.get("ARTIPIVOT_AGENTS_MANIFEST", ".agents.yaml")
 
+    # Resolve project root — manifest is relative to project root
+    manifest_path = Path(resolved)
+    if manifest_path.parent != Path("."):
+        project_root = manifest_path.parent
+    else:
+        # manifest is in cwd, find project root by looking for .agents.yaml or pyproject.toml
+        cwd = Path.cwd()
+        project_root = cwd
+        # Walk up to find project root (contains .agents.yaml)
+        for p in [cwd, *cwd.parents]:
+            if (p / ".agents.yaml").exists() or (p / "pyproject.toml").exists():
+                project_root = p
+                break
+
+    os.chdir(project_root)
+
     typer.echo(f"ArtiPivot starting...")
     typer.echo(f"  manifest:   {resolved}")
+    typer.echo(f"  project:    {project_root}")
     typer.echo(f"  env file:   {env_file}")
     typer.echo(f"  log level:  {os.environ.get('ARTIPIVOT_LOG_LEVEL', 'INFO')}")
     typer.echo(f"  log format: {os.environ.get('ARTIPIVOT_LOG_FORMAT', 'json')}")

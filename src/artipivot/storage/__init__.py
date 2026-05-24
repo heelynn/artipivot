@@ -11,7 +11,7 @@ from artipivot.storage.factory import (
     BackendFactory,
 )
 from artipivot.storage.provider import StorageConfig, StorageProvider
-from artipivot.storage.registry import register_persistent
+from artipivot.storage.registry import register_factory, resolve, available_backends
 from artipivot.storage.search import (
     EmbeddingConfig,
     EmbeddingNotSupportedError,
@@ -34,7 +34,9 @@ __all__ = [
     "StorageProvider",
     "StorageBundle",
     # Registry
-    "register_persistent",
+    "register_factory",
+    "resolve",
+    "available_backends",
     # Search
     "EmbeddingConfig",
     "EmbeddingNotSupportedError",

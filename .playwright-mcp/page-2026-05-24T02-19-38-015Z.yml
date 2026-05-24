@@ -1,0 +1,58 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: ArtiPivot
+      - button [ref=e7]:
+        - img [ref=e8]
+    - navigation [ref=e11]:
+      - link "Chat" [ref=e12] [cursor=pointer]:
+        - /url: /
+        - img [ref=e13]
+        - generic [ref=e15]: Chat
+      - link "Agents" [ref=e16] [cursor=pointer]:
+        - /url: /admin/agents
+        - img [ref=e17]
+        - generic [ref=e20]: Agents
+      - link "Config" [ref=e21] [cursor=pointer]:
+        - /url: /admin/config
+        - img [ref=e22]
+        - generic [ref=e25]: Config
+      - link "Observe" [active] [ref=e26] [cursor=pointer]:
+        - /url: /admin/observe
+        - img [ref=e27]
+        - generic [ref=e29]: Observe
+    - button "Dark" [ref=e31]:
+      - img [ref=e32]
+      - generic [ref=e34]: Dark
+  - main [ref=e35]:
+    - generic [ref=e149]:
+      - heading "Observability" [level=1] [ref=e150]
+      - paragraph [ref=e151]: Circuit breaker status and graph topology
+      - generic [ref=e152]:
+        - heading "Circuit Breakers" [level=2] [ref=e153]:
+          - img [ref=e154]
+          - text: Circuit Breakers
+        - generic [ref=e157]:
+          - generic [ref=e159]: code_agent
+          - generic [ref=e161]:
+            - generic [ref=e162]: Active
+            - generic [ref=e163]:
+              - paragraph [ref=e164]: "Failure threshold: 5"
+              - paragraph [ref=e165]: "Recovery timeout: 60s"
+      - generic [ref=e166]:
+        - heading "Graph Topology" [level=2] [ref=e167]:
+          - img [ref=e168]
+          - text: Graph Topology
+        - combobox [ref=e171]:
+          - generic: code_agent
+          - img [ref=e172]
+        - document [ref=e176]:
+          - generic [ref=e187]:
+            - paragraph [ref=e196]: "LLM: researcher"
+            - paragraph [ref=e203]: "Tools: collector"
+            - paragraph [ref=e212]: "LLM: summarizer"
+            - paragraph [ref=e221]: "LLM: refiner"
+            - paragraph [ref=e228]: "Tools: formatter"
+            - paragraph [ref=e237]: "LLM: finalizer"
+            - paragraph [ref=e244]: START
+            - paragraph [ref=e251]: END

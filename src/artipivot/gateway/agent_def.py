@@ -126,7 +126,7 @@ class AgentDef:
                     sub_agent_refs.append(name)
                 else:
                     # Private sub-agent — namespace with agent_id, store inline def
-                    ns_name = f"{agent_id}:{name}"
+                    ns_name = f"{agent_id}__{name}"
                     sub_agent_refs.append(ns_name)
                     if ref.get("graph"):
                         from artipivot.graph.dsl import parse_graph_def
@@ -157,6 +157,25 @@ class AgentDef:
             if n not in sub_agent_refs:
                 sub_agent_refs.append(n)
 
+        # Resolve intent_map targets: private (public:false) sub-agents get
+        # namespaced names. Build mapping: clean_name → resolved_name.
+        # Old-format inline defs stay as-is (bare names, backward compat).
+        _name_map: dict[str, str] = {}
+        for ref in raw_refs:
+            if isinstance(ref, dict):
+                nm = ref.get("name", "")
+                if not nm:
+                    continue
+                if ref.get("public", True):
+                    _name_map[nm] = nm
+                else:
+                    _name_map[nm] = f"{agent_id}__{nm}"
+
+        # Update intent_map targets that match private sub-agent names
+        for intent, target in list(intent_map.items()):
+            if target in _name_map:
+                intent_map[intent] = _name_map[target]
+
         # Circuit breaker config
         circuit_data = data.get("circuit", {})
         circuit = CircuitConfig(
@@ -182,30 +201,56 @@ class AgentDef:
         )
 
     def to_dict(self) -> dict:
-        """Serialize AgentDef to dict."""
+        """Serialize AgentDef to a dict compatible with from_dict().
+
+        Returns a format that can be stored in DocumentStore and reconstructed
+        via from_dict() without data loss. Also includes flat fields for
+        frontend compatibility (confidence_threshold, intent_map).
+        """
+        # Build rich intents with descriptions
+        intents = {}
+        for intent, target in self.intent_map.items():
+            entry: dict = {"target": target}
+            desc = self.intent_descriptions.get(intent)
+            if desc:
+                entry["description"] = desc
+            intents[intent] = entry
+
+        # Build sub_agents dict — from_dict reads all types from one dict
+        sub_agents = {}
+        for n, s in self.sub_agents.items():
+            sub_agents[n] = {
+                "tools": s.tools,
+                "system_prompt": s.system_prompt,
+                "max_iterations": s.max_iterations,
+            }
+        for n, d in self.declarative_sub_agents.items():
+            sub_agents[n] = {
+                "strategy": d.strategy,
+                "tools": d.tools,
+                "system_prompt": d.system_prompt,
+                "strategy_config": d.strategy_config,
+            }
+        for n, g in self.graph_sub_agents.items():
+            sub_agents[n] = {"graph": g.to_dict()}
+
         return {
             "agent_id": self.agent_id,
             "model": self.model,
-            "confidence_threshold": self.confidence_threshold,
-            "intent_map": self.intent_map,
+            "routing": {
+                "intents": intents,
+                "confidence_threshold": self.confidence_threshold,
+            },
+            "sub_agents": sub_agents,
+            "sub_agent_refs": self.sub_agent_refs,
+            "tools": self.tools,
+            "prompts": self.prompts,
             "circuit": {
                 "enabled": self.circuit.enabled,
                 "failure_threshold": self.circuit.failure_threshold,
                 "recovery_timeout": self.circuit.recovery_timeout,
             },
-            "sub_agents": {
-                n: {"tools": s.tools, "system_prompt": s.system_prompt, "max_iterations": s.max_iterations}
-                for n, s in self.sub_agents.items()
-            },
-            "declarative_sub_agents": {
-                n: {"strategy": d.strategy, "tools": d.tools, "system_prompt": d.system_prompt, "strategy_config": d.strategy_config}
-                for n, d in self.declarative_sub_agents.items()
-            },
-            "graph_sub_agents": {
-                n: {"name": g.name, "nodes": len(g.nodes), "edges": len(g.edges)}
-                for n, g in self.graph_sub_agents.items()
-            },
-            "sub_agent_refs": self.sub_agent_refs,
-            "tools": self.tools,
-            "prompts": self.prompts,
+            # Flat fields for frontend backward compat
+            "confidence_threshold": self.confidence_threshold,
+            "intent_map": self.intent_map,
         }

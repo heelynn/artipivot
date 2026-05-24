@@ -39,6 +39,7 @@ class AgentRegistry:
     ) -> None:
         """Register an AgentDef: resolve sub-agents + build main graph + register to Gateway."""
         sub_agent_nodes = self._resolve_sub_agents(agent_def, checkpointer=checkpointer)
+        self._enrich_with_global_sub_agents(sub_agent_nodes)
 
         graph = self._factory.build(
             agent_id=agent_def.agent_id,
@@ -88,6 +89,7 @@ class AgentRegistry:
             sub_agent_nodes = self._resolve_sub_agents(
                 agent_def, checkpointer=checkpointer
             )
+            self._enrich_with_global_sub_agents(sub_agent_nodes)
             graph = self._factory.build(
                 agent_id=agent_id,
                 sub_agent_nodes=sub_agent_nodes,
@@ -100,6 +102,23 @@ class AgentRegistry:
                 agent_id=agent_id,
                 sub_agents=list(sub_agent_nodes.keys()),
             )
+
+    def _enrich_with_global_sub_agents(
+        self, sub_agent_nodes: dict[str, CompiledStateGraph]
+    ) -> None:
+        """Add all globally registered sub-agents for route validation.
+
+        Route validation requires every intent target to have a sub-agent
+        graph. Some targets may point to global (public) sub-agents not
+        explicitly listed in sub_agent_refs. This method adds them.
+        """
+        if self._sub_agent_registry is None:
+            return
+        for name in self._sub_agent_registry.list_sub_agents():
+            if name not in sub_agent_nodes:
+                graph = self._sub_agent_registry.get(name)
+                if graph is not None:
+                    sub_agent_nodes[name] = graph
 
     def _resolve_sub_agents(
         self, agent_def: AgentDef, *, checkpointer=None
@@ -131,29 +150,29 @@ class AgentRegistry:
 
         Resolution order:
         1. Direct registry lookup by the given name (may be namespaced)
-        2. For simple names: check agent_id:name (agent private) before public pool
+        2. For simple names: check agent_id__name (agent private) before public pool
         3. Check inline definitions in agent_def
         4. Auto-stub
         """
         agent_id = agent_def.agent_id
 
-        # 1. Direct lookup (handles namespaced names like "agent_id:name")
+        # 1. Direct lookup (handles namespaced names like "agent_id__name")
         graph = self._sub_agent_registry.get(name)
         if graph is not None:
             return graph
 
         # 2. For simple (non-namespaced) names: check private namespace first,
         #    then public pool
-        if ":" not in name:
-            ns_name = f"{agent_id}:{name}"
+        if "__" not in name:
+            ns_name = f"{agent_id}__{name}"
             graph = self._sub_agent_registry.get(ns_name)
             if graph is not None:
                 return graph
 
         # 3. Check inline definitions (both simple and namespaced names)
         defn = self._find_def(agent_def, name)
-        if defn is None and ":" not in name:
-            defn = self._find_def(agent_def, f"{agent_id}:{name}")
+        if defn is None and "__" not in name:
+            defn = self._find_def(agent_def, f"{agent_id}__{name}")
         if defn is not None:
             reg_name = defn.name if hasattr(defn, 'name') and defn.name else name
             graph = self._sub_agent_registry.build_and_register(

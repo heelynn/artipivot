@@ -1,0 +1,302 @@
+2026-05-24T10:10:43.603637+08:00 ERROR bootstrap.agent_register_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 216, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 43, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'chat' to sub-agent 'chat', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent:chat']
+2026-05-24T10:26:18.513370+08:00 ERROR bootstrap.agent_register_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 216, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 43, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'chat' to sub-agent 'chat', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent:chat']
+2026-05-24T10:34:48.186076+08:00 ERROR bootstrap.agent_register_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 216, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 43, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'chat' to sub-agent 'chat', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent:chat']
+2026-05-24T10:37:02.563753+08:00 ERROR bootstrap.agent_register_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 216, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 43, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'chat' to sub-agent 'chat', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent:chat']
+2026-05-24T10:40:43.333556+08:00 ERROR bootstrap.agent_register_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 216, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 43, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'chat' to sub-agent 'chat', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent:chat']
+2026-05-24T10:59:41.341010+08:00 ERROR bootstrap.agent_register_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 216, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 43, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'chat' to sub-agent 'chat', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent:chat']
+2026-05-24T11:00:33.197244+08:00 ERROR bootstrap.agent_register_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 216, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 43, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'chat' to sub-agent 'chat', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent:chat']
+2026-05-24T11:04:45.035968+08:00 ERROR bootstrap.agent_register_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 216, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 43, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'chat' to sub-agent 'chat', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent:chat']
+2026-05-24T11:26:18.847579+08:00 ERROR bootstrap.agent_register_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 216, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 43, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'chat' to sub-agent 'chat', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent:chat']
+2026-05-24T12:01:27.000150+08:00 ERROR bootstrap.agent_register_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 193, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 43, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'chat' to sub-agent 'chat', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent:chat']
+2026-05-24T12:19:40.628642+08:00 ERROR bootstrap.agent_register_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 193, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 43, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'chat' to sub-agent 'chat', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent:chat']
+2026-05-24T12:34:00.546003+08:00 ERROR bootstrap.agent_register_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 193, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 43, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'chat' to sub-agent 'chat', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent:chat']
+2026-05-24T12:52:37.530311+08:00 ERROR bootstrap.agent_register_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 193, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 43, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'chat' to sub-agent 'chat', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent:chat']
+2026-05-24T12:54:58.961353+08:00 ERROR bootstrap.agent_register_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 193, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 43, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'chat' to sub-agent 'chat', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent:chat']
+2026-05-24T12:57:18.697151+08:00 ERROR bootstrap.agent_register_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 193, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 43, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'chat' to sub-agent 'chat', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent:chat']
+2026-05-24T17:54:59.944426+08:00 ERROR bootstrap.agent_register_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 193, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 43, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 52, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'time' to sub-agent 'time', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent:chat']
+2026-05-24T17:58:18.788286+08:00 ERROR bootstrap.agent_register_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 193, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 43, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'time' to sub-agent 'time', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent:chat']
+2026-05-24T17:58:18.788927+08:00 ERROR bootstrap.agent_register_failed  agent_id=code_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 193, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 43, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'code_agent' maps intent 'code' to sub-agent 'code_agent:code', but no sub-agent graph provided. Available: ['code', 'time', 'analyzer']
+2026-05-24T17:59:26.389079+08:00 ERROR bootstrap.agent_register_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 193, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 52, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 29, in build
+    builder = build_root_graph(
+              ^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/root.py", line 77, in build_root_graph
+    builder.add_node(name, subgraph)
+  File "/Users/heelynn/project/artipivot/.venv/lib/python3.12/site-packages/langgraph/graph/state.py", line 799, in add_node
+    raise ValueError(
+ValueError: ':' is a reserved character and is not allowed in the node names.
+2026-05-24T17:59:26.391049+08:00 ERROR bootstrap.agent_register_failed  agent_id=code_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 193, in bootstrap
+    agent_registry.register_def(
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 52, in register_def
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 29, in build
+    builder = build_root_graph(
+              ^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/root.py", line 77, in build_root_graph
+    builder.add_node(name, subgraph)
+  File "/Users/heelynn/project/artipivot/.venv/lib/python3.12/site-packages/langgraph/graph/state.py", line 799, in add_node
+    raise ValueError(
+ValueError: ':' is a reserved character and is not allowed in the node names.
+2026-05-24T18:33:35.188321+08:00 ERROR sub_agent_watcher.rebuild_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 240, in _on_sub_agent_change
+    await agent_registry.rebuild_agent(aid, checkpointer=checkpointer, store=lg_store)
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 100, in rebuild_agent
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'time' to sub-agent 'time', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent__chat']
+2026-05-24T18:41:01.909541+08:00 ERROR config_watcher.rebuild_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 232, in _on_agent_change
+    await agent_registry.rebuild_agent(agent_id, checkpointer=checkpointer, store=lg_store)
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 97, in rebuild_agent
+    sub_agent_nodes = self._resolve_sub_agents(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 127, in _resolve_sub_agents
+    graph = self._resolve_one_sub_agent(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 150, in _resolve_one_sub_agent
+    graph = self._sub_agent_registry.get(name)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/sub_agent_registry.py", line 53, in get
+    return self._compiled.get(name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: unhashable type: 'dict'
+2026-05-24T18:44:24.199716+08:00 ERROR config_watcher.rebuild_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 234, in _on_agent_change
+    await agent_registry.rebuild_agent(agent_id, checkpointer=checkpointer, store=lg_store)
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 97, in rebuild_agent
+    sub_agent_nodes = self._resolve_sub_agents(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 127, in _resolve_sub_agents
+    graph = self._resolve_one_sub_agent(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 150, in _resolve_one_sub_agent
+    graph = self._sub_agent_registry.get(name)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/sub_agent_registry.py", line 53, in get
+    return self._compiled.get(name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: unhashable type: 'dict'
+2026-05-24T18:45:31.619387+08:00 ERROR config_watcher.rebuild_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 247, in _on_agent_change
+    await agent_registry.rebuild_agent(agent_id, checkpointer=checkpointer, store=lg_store)
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 100, in rebuild_agent
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'time' to sub-agent 'time', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent__chat']
+2026-05-24T18:46:46.720654+08:00 ERROR config_watcher.rebuild_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 247, in _on_agent_change
+    await agent_registry.rebuild_agent(agent_id, checkpointer=checkpointer, store=lg_store)
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 100, in rebuild_agent
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'time' to sub-agent 'time', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent__chat']
+2026-05-24T18:58:28.656297+08:00 ERROR config_watcher.rebuild_failed  agent_id=chat_agent exception=Traceback (most recent call last):
+  File "/Users/heelynn/project/artipivot/src/artipivot/bootstrap.py", line 247, in _on_agent_change
+    await agent_registry.rebuild_agent(agent_id, checkpointer=checkpointer, store=lg_store)
+  File "/Users/heelynn/project/artipivot/src/artipivot/gateway/registry.py", line 100, in rebuild_agent
+    graph = self._factory.build(
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 27, in build
+    self._validate_routing(agent_id, sub_agent_nodes)
+  File "/Users/heelynn/project/artipivot/src/artipivot/graph/factory.py", line 42, in _validate_routing
+    raise ValueError(
+ValueError: Routing config for 'chat_agent' maps intent 'time' to sub-agent 'time', but no sub-agent graph provided. Available: ['time_helper', 'chat_agent__chat']
