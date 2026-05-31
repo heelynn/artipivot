@@ -31,6 +31,7 @@ export interface AgentInfo {
   sub_agent_refs?: unknown[]
   tools?: string[]
   prompts?: Record<string, string>
+  default_responses?: Record<string, string>
   declarative_sub_agents?: Record<string, unknown>
   graph_sub_agents?: Record<string, unknown>
   memory?: MemoryConfig
@@ -65,6 +66,17 @@ export interface SubAgentInfo {
   strategy_config?: Record<string, unknown>
   graph?: Record<string, unknown>
   status?: string
+}
+
+export interface ThreadInfo {
+  thread_id: string
+  last_message: string
+  updated_at: string
+}
+
+export interface ThreadMessages {
+  thread_id: string
+  messages: { role: 'user' | 'assistant'; content: string }[]
 }
 
 export interface CircuitStatus {
@@ -274,5 +286,19 @@ export const api = {
   // Health
   health() {
     return request<{ status: string }>('/health')
+  },
+
+  // Threads
+  listThreads(agentId: string) {
+    return request<ThreadInfo[]>(`/api/v1/chat/${agentId}/threads`)
+  },
+  getThreadMessages(agentId: string, threadId: string) {
+    return request<ThreadMessages>(`/api/v1/chat/${agentId}/threads/${threadId}/messages`)
+  },
+  deleteThread(agentId: string, threadId: string) {
+    return request<{ status: string; thread_id: string }>(
+      `/api/v1/chat/${agentId}/threads/${threadId}`,
+      { method: 'DELETE' }
+    )
   },
 }

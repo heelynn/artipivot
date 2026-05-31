@@ -1,22 +1,23 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useSSE, type Message } from '@/hooks/useSSE'
-import { api } from '@/lib/api'
-import type { AgentInfo } from '@/lib/api'
+import { api, type AgentInfo, type ThreadInfo } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useTranslation } from 'react-i18next'
-import { Send, Bot, User, Loader2 } from 'lucide-react'
+import { Send, Bot, User, Loader2, Plus, MessageSquare, Trash2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 
 export function ChatPage() {
-  const { messages, isStreaming, nodeStatus, sendMessage, clearMessages } = useSSE()
+  const { messages, isStreaming, nodeStatus, sendMessage, clearMessages, loadMessages } = useSSE()
   const [input, setInput] = useState('')
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [selectedAgent, setSelectedAgent] = useState<string>('')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const { t } = useTranslation()
-  const [threadId] = useState(() => crypto.randomUUID())
+  const [threadId, setThreadId] = useState<string>(() => crypto.randomUUID())
+  const [threads, setThreads] = useState<ThreadInfo[]>([])
+  const [loadingThreads, setLoadingThreads] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -34,11 +35,76 @@ export function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  const refreshThreads = useCallback(async (agentId: string) => {
+    setLoadingThreads(true)
+    try {
+      const list = await api.listThreads(agentId)
+      setThreads(list)
+    } catch {
+      setThreads([])
+    } finally {
+      setLoadingThreads(false)
+    }
+  }, [])
+
+  // Load threads when agent changes
+  useEffect(() => {
+    if (selectedAgent) {
+      refreshThreads(selectedAgent)
+      // Start a new thread when switching agents
+      setThreadId(crypto.randomUUID())
+      clearMessages()
+    }
+  }, [selectedAgent]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleNewThread = () => {
+    setThreadId(crypto.randomUUID())
+    clearMessages()
+  }
+
+  const handleSelectThread = async (thread: ThreadInfo) => {
+    if (thread.thread_id === threadId) return
+    setThreadId(thread.thread_id)
+    try {
+      const data = await api.getThreadMessages(selectedAgent, thread.thread_id)
+      const loaded: Message[] = data.messages.map((m, i) => ({
+        id: `hist-${thread.thread_id}-${i}`,
+        role: m.role,
+        content: m.content,
+        timestamp: 0,
+      }))
+      loadMessages(loaded)
+    } catch {
+      clearMessages()
+    }
+  }
+
+  const handleDeleteThread = async (e: React.MouseEvent, thread: ThreadInfo) => {
+    e.stopPropagation()
+    try {
+      await api.deleteThread(selectedAgent, thread.thread_id)
+      setThreads(prev => prev.filter(t => t.thread_id !== thread.thread_id))
+      if (thread.thread_id === threadId) {
+        handleNewThread()
+      }
+    } catch (err) {
+      console.error('Failed to delete thread', err)
+    }
+  }
+
+  const handleSelectAgent = (agentId: string) => {
+    if (agentId !== selectedAgent) {
+      setSelectedAgent(agentId)
+    }
+  }
+
   const handleSend = () => {
     const trimmed = input.trim()
     if (!trimmed || !selectedAgent || isStreaming) return
     setInput('')
     sendMessage(selectedAgent, trimmed, threadId)
+    // Refresh thread list after sending
+    setTimeout(() => refreshThreads(selectedAgent), 1000)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -66,30 +132,87 @@ export function ChatPage() {
             <PanelLeftClose />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {agents.map(agent => (
-            <button
-              key={agent.agent_id}
-              onClick={() => {
-                setSelectedAgent(agent.agent_id)
-                clearMessages()
-              }}
-              className={cn(
-                'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-left transition-colors',
-                selectedAgent === agent.agent_id
-                  ? 'bg-accent text-accent-foreground font-medium'
-                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-              )}
-            >
-              <Bot size={16} />
-              <div className="truncate flex-1">
-                <div className="text-sm">{agent.agent_id}</div>
-                {typeof agent.model === 'object' && agent.model && 'name' in agent.model && (
-                  <div className="text-xs text-muted-foreground truncate">{String(agent.model.name)}</div>
+        <div className="flex-1 overflow-y-auto">
+          {/* Agent list */}
+          <div className="p-2 space-y-1">
+            {agents.map(agent => (
+              <button
+                key={agent.agent_id}
+                onClick={() => handleSelectAgent(agent.agent_id)}
+                className={cn(
+                  'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-left transition-colors',
+                  selectedAgent === agent.agent_id
+                    ? 'bg-accent text-accent-foreground font-medium'
+                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                )}
+              >
+                <Bot size={16} />
+                <div className="truncate flex-1">
+                  <div className="text-sm">{agent.agent_id}</div>
+                  {typeof agent.model === 'object' && agent.model && 'name' in agent.model && (
+                    <div className="text-xs text-muted-foreground truncate">{String(agent.model.name)}</div>
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
+
+          {/* Thread list for selected agent */}
+          {selectedAgent && (
+            <>
+              <div className="flex items-center justify-between border-t border-border px-3 py-2">
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  {t('chat.sessions', 'Sessions')}
+                </span>
+                <button
+                  onClick={handleNewThread}
+                  className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  title={t('chat.newSession', 'New session')}
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
+              <div className="px-2 pb-2 space-y-0.5">
+                {loadingThreads ? (
+                  <div className="flex items-center justify-center py-3">
+                    <Loader2 size={14} className="animate-spin text-muted-foreground" />
+                  </div>
+                ) : threads.length === 0 ? (
+                  <div className="px-2 py-3 text-xs text-muted-foreground text-center">
+                    {t('chat.noSessions', 'No sessions yet')}
+                  </div>
+                ) : (
+                  threads.map(thread => (
+                    <div
+                      key={thread.thread_id}
+                      onClick={() => handleSelectThread(thread)}
+                      className={cn(
+                        'group flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs cursor-pointer transition-colors',
+                        thread.thread_id === threadId
+                          ? 'bg-accent text-accent-foreground'
+                          : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                      )}
+                    >
+                      <MessageSquare size={12} className="shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="truncate">{thread.last_message || thread.thread_id.slice(0, 8)}</div>
+                        {thread.updated_at && (
+                          <div className="text-[10px] opacity-60 truncate">{formatTime(thread.updated_at)}</div>
+                        )}
+                      </div>
+                      <button
+                        onClick={e => handleDeleteThread(e, thread)}
+                        className="shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive transition-opacity"
+                        title={t('chat.deleteSession', 'Delete session')}
+                      >
+                        <Trash2 size={10} />
+                      </button>
+                    </div>
+                  ))
                 )}
               </div>
-            </button>
-          ))}
+            </>
+          )}
         </div>
       </div>
 
@@ -206,6 +329,25 @@ function MessageBubble({ message, isStreaming }: { message: Message; isStreaming
       </div>
     </div>
   )
+}
+
+function formatTime(isoStr: string): string {
+  try {
+    const d = new Date(isoStr)
+    const now = new Date()
+    const diffMs = now.getTime() - d.getTime()
+    const diffMin = Math.floor(diffMs / 60000)
+
+    if (diffMin < 1) return 'just now'
+    if (diffMin < 60) return `${diffMin}m ago`
+
+    const diffHr = Math.floor(diffMin / 60)
+    if (diffHr < 24) return `${diffHr}h ago`
+
+    return d.toLocaleDateString()
+  } catch {
+    return ''
+  }
 }
 
 function PanelLeftClose(props: React.SVGProps<SVGSVGElement>) {

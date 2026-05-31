@@ -418,6 +418,7 @@ class AgentUpdateDTO(BaseModel):
     prompts: dict[str, str] | None = None
     tools: list[str] | None = None
     sub_agent_refs: list | None = None  # list of str | dict
+    default_responses: dict | None = None  # {"clarify": "...", "fallback": "..."}
     circuit: dict | None = None
     memory: dict | None = None
 
@@ -445,6 +446,8 @@ async def update_agent(agent_id: str, dto: AgentUpdateDTO):
         updates["circuit"] = dto.circuit
     if dto.memory is not None:
         updates["memory"] = dto.memory
+    if dto.default_responses is not None:
+        updates["default_responses"] = dto.default_responses
 
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")

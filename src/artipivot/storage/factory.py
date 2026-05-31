@@ -129,15 +129,15 @@ class SqliteFactory(BackendFactory):
         self._check_supports(type)
 
         if type == TYPE_CHECKPOINTER:
-            import sqlite3
             from pathlib import Path
-            from langgraph.checkpoint.sqlite import SqliteSaver
-            db_path = config.get("db_path", ".artipivot/data.db")
-            Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-            conn = sqlite3.connect(db_path, check_same_thread=False)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=5000")
-            return SqliteSaver(conn)
+            from artipivot.storage._sqlite_checkpointer import LazyAsyncSqliteCheckpointer
+            # Checkpointer uses a separate db file to avoid locking conflicts
+            # with the store's synchronous SQLite connection
+            doc_db_path = config.get("db_path", ".artipivot/data.db")
+            p = Path(doc_db_path)
+            cp_db_path = str(p.with_stem(p.stem + "-checkpoints"))
+            Path(cp_db_path).parent.mkdir(parents=True, exist_ok=True)
+            return LazyAsyncSqliteCheckpointer(cp_db_path)
 
         if type == TYPE_STORE:
             import sqlite3

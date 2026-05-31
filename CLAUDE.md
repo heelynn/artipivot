@@ -70,9 +70,9 @@ POST /api/v1/chat/{agent_id}
 
 ### Configuration & Hot-Reload
 
-YAML is source of truth on every startup (`bootstrap.py` loads `.agents.yaml` or `ARTIPIVOT_AGENTS_MANIFEST`). At runtime:
+Primary configuration via **Web Admin UI** (`http://localhost:5173/admin/agents`). `.agents.yaml` serves as production bootstrap manifest loaded on startup. At runtime:
 
-- **Hot-reloadable** (no graph rebuild): model config, prompts, routing rules (intent_map, threshold), rate limits
+- **Hot-reloadable** (no graph rebuild): model config, prompts, routing rules (intent_map, threshold), rate limits, default responses
 - **Requires graph rebuild**: sub-agent registration, main agent registration (auto-rebuilt via PluginWatcher → GraphRebuilder)
 
 `ConfigCenter` holds `ModelProvider`, `PromptStore`, `RoutingConfig` — all read from memory on every request.
@@ -87,11 +87,10 @@ Two providers: `openai` (covers OpenAI, DeepSeek, any OpenAI-compatible API) and
 
 ### File Layout Conventions
 
-- `src/artipivot/` — all source code under `src/`
-- `config/seed/` — YAML seed configs (loaded on first start only)
+- `src/artipivot/` — all source code
+- `web/` — React frontend (Vite + Tailwind)
 - `doc/` — usage guide + per-module docs
-- `plan/` — design docs and development plan
-- `.agents.yaml` — runtime agent manifest (project root)
+- `.agents.yaml` — production bootstrap manifest
 
 ### Extension Points
 

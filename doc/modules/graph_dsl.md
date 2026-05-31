@@ -11,7 +11,6 @@
 ## YAML 语法
 
 ```yaml
-# config/seed/sub_agents.yaml
 sub_agents:
   # 现有策略方式（不变）
   code_writer:

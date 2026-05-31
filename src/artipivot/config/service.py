@@ -107,6 +107,7 @@ class ConfigService:
             "confidence_threshold": routing.get("confidence_threshold", 0.7),
             "intent_map": intent_map,
             "intent_descriptions": intent_descriptions,
+            "default_responses": data.get("default_responses", {}),
         }
 
     async def get_agent_circuit(self, agent_id: str) -> dict | None:
@@ -186,6 +187,9 @@ class ConfigService:
         if "memory" in updates:
             data["memory"] = updates["memory"]
             updated.append("memory")
+        if "default_responses" in updates:
+            data["default_responses"] = updates["default_responses"]
+            updated.append("default_responses")
 
         if updated:
             await self._store.put("agents", agent_id, data)

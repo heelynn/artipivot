@@ -11,6 +11,12 @@ from artipivot.storage.base import ChangeNotifier, DocumentStore
 class ConfigCenter:
     """Dynamic configuration center — unified entry point."""
 
+    # System defaults for clarify / fallback when agent config doesn't override
+    DEFAULT_RESPONSES = {
+        "clarify": "抱歉，我不太确定您的意思，请再描述一下您的需求？",
+        "fallback": "抱歉，我暂时无法处理这个请求，请尝试换一种描述方式？",
+    }
+
     def __init__(
         self,
         store: DocumentStore,
@@ -25,6 +31,15 @@ class ConfigCenter:
         self.prompts = PromptStore()
         self.routing = RoutingConfig()
         self.rate_limits = rate_limits or RateLimiter()
+        self._default_responses: dict[str, dict[str, str]] = {}
+
+    def get_default_response(self, agent_id: str, key: str) -> str:
+        """Get a default response message for an agent.
+
+        Falls back: agent config → ConfigCenter.DEFAULT_RESPONSES.
+        """
+        agent_responses = self._default_responses.get(agent_id, {})
+        return agent_responses.get(key) or self.DEFAULT_RESPONSES.get(key, "")
 
     def load_from_manifest(self, manifest) -> None:
         """Populate routing + prompts directly from an AgentManifest (no DocumentStore).
@@ -55,13 +70,31 @@ class ConfigCenter:
                 key = f"{agent_def.agent_id}:{node_name}"
                 self.prompts._prompts[key] = {"_id": key, "system": template}
 
+            # Default responses (clarify / fallback)
+            if agent_def.default_responses:
+                self._default_responses[agent_def.agent_id] = dict(agent_def.default_responses)
+
     async def start(self) -> None:
         """Load any existing DocumentStore configs + subscribe to runtime changes."""
         await self._load_all()
         await self._notifier.subscribe("prompt_configs", self.prompts.apply)
         await self._notifier.subscribe("routing_configs", self._routing_change_handler)
         await self._notifier.subscribe("ratelimit_configs", self.rate_limits.apply)
+        await self._notifier.subscribe("agents", self._agent_change_handler)
         await self._notifier.start()
+
+    async def _agent_change_handler(
+        self, collection: str, key: str, action: str, data: dict
+    ) -> None:
+        """Handle agent config change — update default_responses."""
+        if action == "delete":
+            self._default_responses.pop(key, None)
+        else:
+            dr = data.get("default_responses")
+            if dr:
+                self._default_responses[key] = dict(dr)
+            else:
+                self._default_responses.pop(key, None)
 
     async def _routing_change_handler(
         self, collection: str, key: str, action: str, data: dict

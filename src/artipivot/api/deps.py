@@ -23,6 +23,7 @@ _tool_registry: ToolRegistry | None = None
 _agent_registry: AgentRegistry | None = None
 _sub_agent_registry: SubAgentRegistry | None = None
 _storage_provider: StorageProvider | None = None
+_memory_storage: StorageProvider | None = None
 _tool_reloader = None
 _memory_config = None
 _config_service: ConfigService | None = None
@@ -76,6 +77,13 @@ def get_storage_provider() -> StorageProvider:
     return _storage_provider
 
 
+def get_memory_storage() -> StorageProvider:
+    """Get the memory StorageProvider (checkpointer + store)."""
+    if _memory_storage is None:
+        raise RuntimeError("App not initialized — call init_app() first")
+    return _memory_storage
+
+
 def get_config_service() -> ConfigService:
     if _config_service is None:
         raise RuntimeError("App not initialized — call init_app() first")
@@ -102,12 +110,13 @@ def set_components(
     agent_registry: AgentRegistry | None = None,
     sub_agent_registry: SubAgentRegistry | None = None,
     storage_provider: StorageProvider | None = None,
+    memory_storage: StorageProvider | None = None,
     tool_reloader=None,
     memory_config=None,
     config_service: ConfigService | None = None,
 ) -> None:
     """Set shared components — called during app initialization."""
-    global _gateway, _config_center, _plugin_manager, _rate_limiter, _tool_registry, _agent_registry, _sub_agent_registry, _storage_provider, _tool_reloader, _memory_config, _config_service
+    global _gateway, _config_center, _plugin_manager, _rate_limiter, _tool_registry, _agent_registry, _sub_agent_registry, _storage_provider, _memory_storage, _tool_reloader, _memory_config, _config_service
     _gateway = gateway
     _config_center = config_center
     _plugin_manager = plugin_manager
@@ -116,6 +125,7 @@ def set_components(
     _agent_registry = agent_registry
     _sub_agent_registry = sub_agent_registry
     _storage_provider = storage_provider
+    _memory_storage = memory_storage
     _tool_reloader = tool_reloader
     _memory_config = memory_config
     _config_service = config_service

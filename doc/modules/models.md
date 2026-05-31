@@ -15,7 +15,6 @@ flowchart LR
 
 - **`config.py`** -- `ModelConfig` 数据类，描述单个模型配置。
 - **`provider.py`** -- `ModelProvider` 核心类，负责模型解析、fallback 链、工厂函数和运行时热更新。
-- **`loader.py`** -- `load_seed_if_empty()` 函数，在首次启动时将 YAML 种子文件写入 `DocumentStore`。
 
 ## 架构图
 
@@ -221,7 +220,6 @@ PUT  /admin/models/global/fallback
 
 ## YAML 种子配置
 
-`loader.py` 中的 `load_seed_if_empty()` 在集合为空时从 `config/seed/` 加载种子文件。
 
 ### models.yaml 格式
 
@@ -254,7 +252,6 @@ agents:
 
 ### 其他种子文件
 
-`load_seed_if_empty()` 还处理以下集合（非模型相关，此处仅列出）：
 
 - `routing.yaml` -> `routing_configs`
 - `prompts.yaml` -> `prompt_configs`

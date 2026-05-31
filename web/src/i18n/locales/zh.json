@@ -15,7 +15,11 @@
     "subtitle": "选择一个代理并开始对话",
     "placeholder": "向 {{agent}} 发送消息...",
     "placeholderNoAgent": "请先选择一个代理...",
-    "processing": "处理中: {{status}}..."
+    "processing": "处理中: {{status}}...",
+    "sessions": "会话",
+    "newSession": "新建会话",
+    "noSessions": "暂无会话",
+    "deleteSession": "删除会话"
   },
   "agents": {
     "title": "代理管理",
@@ -70,10 +74,24 @@
     },
     "prompts": {
       "title": "提示词",
-      "empty": "空",
-      "promptNamePlaceholder": "提示词名称",
-      "addPrompt": "添加提示词",
-      "tab": "提示词"
+      "description": "自定义意图分类的 system prompt。仅需编写分类逻辑，无需指定输出格式。",
+      "tab": "提示词",
+      "classifyLabel": "意图识别提示词 (classify)",
+      "classifyHint": "在上方默认 prompt 基础上追加个性化内容，或直接修改任意部分",
+      "tipsTitle": "使用说明",
+      "tip1": "占位符 {intents} 会被自动替换为当前路由表中所有 intent 的名称和 description",
+      "tip2": "LLM 必须输出 JSON：{\"intent\": \"<匹配的意图>\", \"confidence\": 0.0-1.0}",
+      "tip3": "输出的 JSON 会被自动解析，无需在 prompt 中做后处理",
+      "tip4": "不满足需求时，才编写自定义 prompt；可先用留空测试内置效果"
+    },
+    "defaultResponses": {
+      "title": "默认回复话术",
+      "description": "当意图识别置信度不足或未匹配到意图时使用的回复消息。",
+      "tab": "默认回复",
+      "clarify": "澄清（置信度低）",
+      "clarifyPlaceholder": "抱歉，我不太确定您的意思，请再描述一下您的需求？",
+      "fallback": "兜底（未匹配意图）",
+      "fallbackPlaceholder": "抱歉，我暂时无法处理这个请求，请尝试换一种描述方式？"
     },
     "memory": {
       "tab": "记忆",

@@ -10,33 +10,8 @@ from artipivot.graph.router import classify, route_by_intent
 from artipivot.graph.state import ArtiPivotState
 
 
-async def clarify_node(state: ArtiPivotState, runtime) -> dict:
-    """Ask user for clarification when confidence is low."""
-    return {
-        "messages": [
-            {
-                "role": "assistant",
-                "content": "抱歉，我不太确定您的意思，请再描述一下您的需求？",
-            }
-        ]
-    }
-
-
-async def fallback_node(state: ArtiPivotState, runtime) -> dict:
-    """Fallback response for unrecognized intents."""
-    return {
-        "messages": [
-            {
-                "role": "assistant",
-                "content": "抱歉，我暂时无法处理这个请求，请尝试换一种描述方式？",
-            }
-        ]
-    }
-
-
 async def respond_node(state: ArtiPivotState, runtime) -> dict:
     """Format final output — passes through sub-agent response."""
-    # If the last message is already from the assistant, just pass through
     if state["messages"] and state["messages"][-1].type == "ai":
         return {}
     return {}
@@ -57,17 +32,31 @@ def build_root_graph(
     """
     builder = StateGraph(ArtiPivotState, context_schema=AgentContext)
 
-    # Bind config_center for the classify node
+    # Bind config_center for classify / clarify / fallback nodes
     async def _classify(state, runtime):
         return await classify(state, runtime, config_center=config_center)
 
     def _route(state, runtime):
         return route_by_intent(state, runtime, config_center=config_center)
 
+    async def _clarify(state, runtime):
+        from langgraph.runtime import Runtime
+        rt: Runtime[AgentContext] = runtime
+        agent_id = rt.context.agent_id
+        msg = config_center.get_default_response(agent_id, "clarify")
+        return {"messages": [{"role": "assistant", "content": msg}]}
+
+    async def _fallback(state, runtime):
+        from langgraph.runtime import Runtime
+        rt: Runtime[AgentContext] = runtime
+        agent_id = rt.context.agent_id
+        msg = config_center.get_default_response(agent_id, "fallback")
+        return {"messages": [{"role": "assistant", "content": msg}]}
+
     # Add fixed nodes
     builder.add_node("classify", _classify)
-    builder.add_node("clarify", clarify_node)
-    builder.add_node("fallback", fallback_node)
+    builder.add_node("clarify", _clarify)
+    builder.add_node("fallback", _fallback)
     builder.add_node("respond", respond_node)
 
     # Add sub-agent nodes

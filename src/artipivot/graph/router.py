@@ -120,6 +120,7 @@ async def classify(
         confidence = float(result.get("confidence", 0.0))
     except (json.JSONDecodeError, ValueError):
         parsed = False
+        reasoning = ""
         intent = raw if raw else "general"
         confidence = 0.5
         log.warning(

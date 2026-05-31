@@ -1,4 +1,4 @@
-"""Tests for declarative sub-agent engine and YAML loader."""
+"""Tests for declarative sub-agent engine."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from artipivot.agents.declarative import (
     DeclarativeSubAgentDef,
     build_declarative_subagent,
 )
-from artipivot.agents.loader import load_sub_agent_defs
 from artipivot.tools.builtin.web_search import web_search
 from artipivot.tools.registry import ToolRegistry
 
@@ -70,57 +69,3 @@ class TestBuildDeclarativeSubagent:
         )
         with pytest.raises(ValueError, match="Unknown strategy"):
             build_declarative_subagent(defn, _tool_node())
-
-
-class TestSubAgentLoader:
-    def test_load_from_yaml(self, tmp_path):
-        yaml_content = """
-sub_agents:
-  code_writer:
-    strategy: react
-    tools:
-      - web_search
-    system_prompt: "You are a coding assistant."
-    strategy_config:
-      max_iterations: 5
-"""
-        (tmp_path / "sub_agents.yaml").write_text(yaml_content)
-        result = load_sub_agent_defs(tmp_path)
-
-        assert "code_writer" in result
-        defn = result["code_writer"]
-        assert defn.strategy == "react"
-        assert defn.tools == ["web_search"]
-        assert defn.system_prompt == "You are a coding assistant."
-        assert defn.strategy_config == {"max_iterations": 5}
-
-    def test_load_missing_file(self, tmp_path):
-        result = load_sub_agent_defs(tmp_path)
-        assert result == {}
-
-    def test_load_empty_yaml(self, tmp_path):
-        (tmp_path / "sub_agents.yaml").write_text("")
-        result = load_sub_agent_defs(tmp_path)
-        assert result == {}
-
-    def test_load_multiple_agents(self, tmp_path):
-        yaml_content = """
-sub_agents:
-  writer:
-    strategy: react
-    tools:
-      - web_search
-  reviewer:
-    strategy: react
-    tools:
-      - web_search
-    strategy_config:
-      max_iterations: 5
-"""
-        (tmp_path / "sub_agents.yaml").write_text(yaml_content)
-        result = load_sub_agent_defs(tmp_path)
-
-        assert len(result) == 2
-        assert result["writer"].strategy == "react"
-        assert result["reviewer"].strategy == "react"
-        assert result["reviewer"].strategy_config["max_iterations"] == 5

@@ -23,6 +23,31 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
 import { Bot, Plus, ChevronDown, ChevronRight, Settings, Zap, GitBranch, FileText, Pencil, Trash2, Wrench, Brain } from 'lucide-react'
 
+const DEFAULT_CLASSIFY_PROMPT = `\
+You are an intent classifier. Your ONLY job is to read the user message and \
+classify it into exactly one of the allowed intents listed below.
+
+## Allowed intents
+{intents}
+
+## Scoring criteria
+仅评估用户意图是否清晰指向某个 allowed intent，不评估意图要执行的具体内容。
+- 0.8–1.0：用户意图明确，与某个 allowed intent 高度匹配
+- 0.5–0.8：用户意图可推断，但表述模糊或存在歧义
+- 0.0–0.5：无法判断用户意图，或消息内容完全无法与任何 intent 关联
+
+## Rules
+1. 先在 reasoning 中完成以下思考：
+   - 提取：用户消息中表达意图的关键语义是什么？实际要处理的内容是什么？
+   - 匹配：意图关键词指向哪个 intent？
+   - 评分：仅按意图指向的清晰度评分，不考虑内容是否有意义。
+2. Choose the single best-matching intent from the list above.
+3. 按上述标准评估 confidence，严格打分，不要虚高。
+4. Respond with ONLY a JSON object — no markdown, no explanation, no extra text.
+5. JSON schema: {"reasoning": "<思考过程>", "intent": "<one of the allowed intents>", "confidence": <0.0-1.0>}
+
+Now classify the user message. Return ONLY the JSON object.`
+
 export function AgentsPage() {
   const { t } = useTranslation()
   const MODEL_FIELDS = [
@@ -101,7 +126,14 @@ export function AgentsPage() {
         confidence_threshold: agent.confidence_threshold ?? 0.7,
       })
     } else if (tab === 'prompts') {
-      setEditForm({ prompts: { ...(agent.prompts ?? {}) } })
+      setEditForm({ classify_prompt: agent.prompts?.classify || DEFAULT_CLASSIFY_PROMPT })
+    } else if (tab === 'defaultResponses') {
+      setEditForm({
+        default_responses: {
+          clarify: agent.default_responses?.clarify || '抱歉，我不太确定您的意思，请再描述一下您的需求？',
+          fallback: agent.default_responses?.fallback || '抱歉，我暂时无法处理这个请求，请尝试换一种描述方式？',
+        }
+      })
     } else if (tab === 'circuit') {
       const c = circuitMap[agent.agent_id]?.circuit
       setEditForm({
@@ -164,7 +196,7 @@ export function AgentsPage() {
       } else if (editTab === 'model') {
         payload = { model: editForm }
       } else if (editTab === 'prompts') {
-        payload = { prompts: editForm.prompts }
+        payload = { prompts: { classify: (editForm.classify_prompt as string) ?? '' } }
       } else if (editTab === 'sub-agents') {
         const refs = ((editForm.sub_agent_refs as unknown[]) ?? []).map((ref: unknown) => {
           const r = ref as Record<string, unknown>
@@ -174,6 +206,8 @@ export function AgentsPage() {
         payload = { sub_agent_refs: refs }
       } else if (editTab === 'memory') {
         payload = { memory: editForm.memory }
+      } else if (editTab === 'defaultResponses') {
+        payload = { default_responses: editForm.default_responses }
       } else {
         payload = editForm
       }
@@ -335,6 +369,21 @@ export function AgentsPage() {
                           </div>
                         )}
 
+                        {/* Default responses */}
+                        {agent.default_responses && Object.keys(agent.default_responses).length > 0 && (
+                          <div>
+                            <SectionHeader icon={<FileText size={14} />} title={t('agents.defaultResponses.title')} />
+                            <div className="space-y-2">
+                              {Object.entries(agent.default_responses).map(([key, value]) => (
+                                <div key={key} className="rounded-md border border-border bg-background p-3">
+                                  <div className="text-xs text-muted-foreground mb-1 font-medium capitalize">{key}</div>
+                                  <div className="text-sm whitespace-pre-wrap">{value}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                         {/* Circuit Breaker */}
                         <div>
                           <SectionHeader icon={<Zap size={14} />} title={t('agents.circuit.title')}
@@ -408,6 +457,7 @@ export function AgentsPage() {
                 <TabsTrigger value="routing">{t('agents.routing.tab')}</TabsTrigger>
                 <TabsTrigger value="prompts">{t('agents.prompts.tab')}</TabsTrigger>
                 <TabsTrigger value="circuit">{t('agents.circuit.tab')}</TabsTrigger>
+                <TabsTrigger value="defaultResponses">{t('agents.defaultResponses.tab')}</TabsTrigger>
                 <TabsTrigger value="sub-agents">{t('agents.subAgents.tab')}</TabsTrigger>
                 <TabsTrigger value="memory">{t('agents.memory.tab')}</TabsTrigger>
               </TabsList>
@@ -505,45 +555,53 @@ export function AgentsPage() {
               </TabsContent>
 
               <TabsContent value="prompts" className="space-y-3 mt-3">
-                {Object.entries((editForm.prompts as Record<string, string>) ?? {}).map(([key, value]) => (
-                  <div key={key}>
-                    <div className="flex items-center gap-2 mb-1">
-                      <Input
-                        value={key}
-                        onChange={e => {
-                          const newPrompts = { ...(editForm.prompts as Record<string, string>) }
-                          delete newPrompts[key]
-                          newPrompts[e.target.value] = value
-                          setEditForm(f => ({ ...f, prompts: newPrompts }))
-                        }}
-                        className="font-mono text-sm flex-1"
-                        placeholder={t('agents.prompts.promptNamePlaceholder')}
-                      />
-                      <Button variant="ghost" size="sm" onClick={() => {
-                        const newPrompts = { ...(editForm.prompts as Record<string, string>) }
-                        delete newPrompts[key]
-                        setEditForm(f => ({ ...f, prompts: newPrompts }))
-                      }}>
-                        <Trash2 size={14} className="text-destructive" />
-                      </Button>
-                    </div>
-                    <textarea
-                      value={value}
-                      onChange={e => {
-                        const newPrompts = { ...(editForm.prompts as Record<string, string>) }
-                        newPrompts[key] = e.target.value
-                        setEditForm(f => ({ ...f, prompts: newPrompts }))
-                      }}
-                      className="w-full h-32 rounded-md border border-input bg-background px-3 py-2 text-sm font-mono resize-none"
-                    />
-                  </div>
-                ))}
-                <Button variant="outline" size="sm" onClick={() => {
-                  const newPrompts = { ...(editForm.prompts as Record<string, string>), '': '' }
-                  setEditForm(f => ({ ...f, prompts: newPrompts }))
-                }}>
-                  <Plus size={14} className="mr-1" /> {t('agents.prompts.addPrompt')}
-                </Button>
+                <p className="text-sm text-muted-foreground">{t('agents.prompts.description')}</p>
+                <div>
+                  <label className="text-sm font-medium">{t('agents.prompts.classifyLabel')}</label>
+                  <textarea
+                    value={(editForm.classify_prompt as string) ?? ''}
+                    onChange={e => setEditForm(f => ({ ...f, classify_prompt: e.target.value }))}
+                    className="w-full h-48 mt-1 rounded-md border border-input bg-background px-3 py-2 text-sm font-mono resize-none"
+                    placeholder={t('agents.prompts.classifyHint')}
+                  />
+                </div>
+                <details className="rounded-md border border-border bg-muted/30 p-3">
+                  <summary className="text-sm font-medium cursor-pointer">{t('agents.prompts.tipsTitle')}</summary>
+                  <ul className="mt-2 space-y-1.5 list-disc list-inside text-xs text-muted-foreground">
+                    <li>{t('agents.prompts.tip1')}</li>
+                    <li>{t('agents.prompts.tip2')}</li>
+                    <li>{t('agents.prompts.tip3')}</li>
+                    <li>{t('agents.prompts.tip4')}</li>
+                  </ul>
+                </details>
+              </TabsContent>
+
+              <TabsContent value="defaultResponses" className="space-y-3 mt-3">
+                <p className="text-sm text-muted-foreground">{t('agents.defaultResponses.description')}</p>
+                <div>
+                  <label className="text-sm font-medium">{t('agents.defaultResponses.clarify')}</label>
+                  <textarea
+                    value={(editForm.default_responses as Record<string, string>)?.clarify ?? ''}
+                    onChange={e => setEditForm(f => ({
+                      ...f,
+                      default_responses: { ...(f.default_responses as Record<string, string>), clarify: e.target.value }
+                    }))}
+                    className="w-full h-24 mt-1 rounded-md border border-input bg-background px-3 py-2 text-sm resize-none"
+                    placeholder={t('agents.defaultResponses.clarifyPlaceholder')}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">{t('agents.defaultResponses.fallback')}</label>
+                  <textarea
+                    value={(editForm.default_responses as Record<string, string>)?.fallback ?? ''}
+                    onChange={e => setEditForm(f => ({
+                      ...f,
+                      default_responses: { ...(f.default_responses as Record<string, string>), fallback: e.target.value }
+                    }))}
+                    className="w-full h-24 mt-1 rounded-md border border-input bg-background px-3 py-2 text-sm resize-none"
+                    placeholder={t('agents.defaultResponses.fallbackPlaceholder')}
+                  />
+                </div>
               </TabsContent>
 
               <TabsContent value="circuit" className="space-y-3 mt-3">

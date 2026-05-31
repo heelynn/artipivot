@@ -84,5 +84,10 @@ export function useSSE() {
     setNodeStatus(null)
   }, [])
 
-  return { messages, isStreaming, nodeStatus, sendMessage, stopStreaming, clearMessages }
+  const loadMessages = useCallback((msgs: Message[]) => {
+    setMessages(msgs)
+    setNodeStatus(null)
+  }, [])
+
+  return { messages, isStreaming, nodeStatus, sendMessage, stopStreaming, clearMessages, loadMessages }
 }

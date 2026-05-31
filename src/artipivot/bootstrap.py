@@ -117,8 +117,6 @@ async def bootstrap(
         or memory_config.context_window.enabled
     ):
         _log.info("bootstrap.memory_enabled", extraction=memory_config.extraction.enabled)
-    else:
-        memory_config = None  # All disabled → None (zero overhead)
 
     # ── 5. ModelProvider — populate from manifest ───────────────
     from artipivot.resilience.circuit_breaker import CircuitRegistry
@@ -160,9 +158,11 @@ async def bootstrap(
     _log.info("bootstrap.sub_agents_from_store")
 
     # ── 9. Gateway + GraphFactory + AgentRegistry ───────────────
-    # L2/L3 controlled by memory_config, backend chosen by memory_storage
-    checkpointer = memory_storage.checkpointer if memory_config and memory_config.l2 else None
-    lg_store = memory_storage.store if memory_config and memory_config.l3 else None
+    # L2 checkpointer and L3 store are always created from memory_storage.
+    # Per-agent control: agent_def.memory_config.l2/l3 determines whether
+    # the checkpointer/store is passed to each agent's graph at compile time.
+    checkpointer = memory_storage.checkpointer
+    lg_store = memory_storage.store
 
     gateway = AgentGateway(
         model_provider,
@@ -327,6 +327,7 @@ async def bootstrap(
         agent_registry=agent_registry,
         sub_agent_registry=sub_agent_registry,
         storage_provider=storage,
+        memory_storage=memory_storage,
         tool_reloader=tool_reloader,
         memory_config=memory_config,
     )

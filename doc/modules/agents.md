@@ -28,7 +28,6 @@ flowchart TD
     DSLGraph --> SubGraph
     SubGraph -->|"挂载到主图"| MainGraph["主图 sub_agent_nodes"]
 
-    YAML["config/seed/sub_agents.yaml"] -->|"load_sub_agent_defs()"| Decl
     YAML -->|"graph: 键"| GD
 ```
 
@@ -39,7 +38,6 @@ flowchart TD
 | `agents/base.py` | `SubAgentDef` 数据类 -- 子代理的基础定义 |
 | `agents/programmatic.py` | `build_programmatic_subagent()` -- 编程式构建，内置 ReAct 拓扑 |
 | `agents/declarative.py` | `DeclarativeSubAgentDef` + `build_declarative_subagent()` -- 声明式策略选择 |
-| `agents/loader.py` | `load_sub_agent_defs()` -- 从 YAML 加载子代理定义 |
 | `agents/strategies/base.py` | `Strategy` ABC -- 所有策略的抽象基类 |
 | `agents/strategies/__init__.py` | 策略注册表：`register_strategy()`、`get_strategy()`、`available_strategies()` |
 | `agents/strategies/react.py` | `ReActStrategy` -- 思考-行动-观察循环 |
@@ -220,11 +218,8 @@ register_strategy("my_strategy", MyStrategy)
 
 ## YAML 加载器
 
-定义在 `agents/loader.py`，函数 `load_sub_agent_defs()` 从 `config/seed/sub_agents.yaml` 加载子代理定义。
 
 ```python
-def load_sub_agent_defs(
-    seed_dir: str | Path = "config/seed",
 ) -> dict[str, DeclarativeSubAgentDef | GraphDef]:
 ```
 
@@ -244,7 +239,6 @@ def load_sub_agent_defs(
 **策略模式**：
 
 ```yaml
-# config/seed/sub_agents.yaml
 sub_agents:
   code_writer:
     strategy: react

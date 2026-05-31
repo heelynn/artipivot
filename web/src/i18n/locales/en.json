@@ -15,7 +15,11 @@
     "subtitle": "Select an agent and start a conversation",
     "placeholder": "Message {{agent}}...",
     "placeholderNoAgent": "Select an agent first...",
-    "processing": "Processing: {{status}}..."
+    "processing": "Processing: {{status}}...",
+    "sessions": "Sessions",
+    "newSession": "New session",
+    "noSessions": "No sessions yet",
+    "deleteSession": "Delete session"
   },
   "agents": {
     "title": "Agent Management",
@@ -70,10 +74,24 @@
     },
     "prompts": {
       "title": "Prompts",
-      "empty": "empty",
-      "promptNamePlaceholder": "Prompt name",
-      "addPrompt": "Add Prompt",
-      "tab": "Prompts"
+      "description": "Custom system prompt for intent classification. Only write classification logic, output format is fixed.",
+      "tab": "Prompts",
+      "classifyLabel": "Intent classification prompt (classify)",
+      "classifyHint": "Add your custom logic on top of the default prompt above, or modify any part",
+      "tipsTitle": "Usage Notes",
+      "tip1": "Placeholder {intents} is auto-replaced with all intent names and descriptions from the routing table",
+      "tip2": "LLM must output JSON: {\"intent\": \"<matched intent>\", \"confidence\": 0.0-1.0}",
+      "tip3": "JSON is auto-parsed by the system; no post-processing needed in the prompt",
+      "tip4": "Only write a custom prompt if the built-in default doesn't meet your needs"
+    },
+    "defaultResponses": {
+      "title": "Default Responses",
+      "description": "Reply messages used when intent confidence is low or no intent matches.",
+      "tab": "Default Reply",
+      "clarify": "Clarify (low confidence)",
+      "clarifyPlaceholder": "I'm not sure what you mean, could you describe your needs more clearly?",
+      "fallback": "Fallback (no intent matched)",
+      "fallbackPlaceholder": "I'm unable to handle this request, please try a different approach."
     },
     "memory": {
       "tab": "Memory",

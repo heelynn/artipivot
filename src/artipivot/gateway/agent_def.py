@@ -57,9 +57,17 @@ class AgentDef:
     # Tools — global whitelist for this agent
     tools: list[str] = field(default_factory=list)
 
-    # Prompts
+    # Prompts — per-node LLM prompt overrides
+    # {"classify": "...", "code_writer": "..."}
+    # Missing keys fall back to system defaults.
     prompts: dict[str, str] = field(default_factory=dict)
-    # {"classify": "...", "respond": "...", "code_writer": "..."}
+
+    # Default responses — clarify / fallback messages returned by the router
+    # when intent confidence is low or no intent matches.
+    default_responses: dict[str, str] = field(default_factory=lambda: {
+        "clarify": "抱歉，我不太确定您的意思，请再描述一下您的需求？",
+        "fallback": "抱歉，我暂时无法处理这个请求，请尝试换一种描述方式？",
+    })
 
     # Circuit breaker
     circuit: CircuitConfig = field(default_factory=CircuitConfig)
@@ -196,6 +204,7 @@ class AgentDef:
             sub_agent_refs=sub_agent_refs,
             tools=data.get("tools", []),
             prompts=data.get("prompts", {}),
+            default_responses=data.get("default_responses", {}),
             circuit=circuit,
             memory_config=MemoryConfig.from_dict(mem_data) if mem_data else MemoryConfig(),
         )
@@ -246,6 +255,7 @@ class AgentDef:
             "sub_agent_refs": self.sub_agent_refs,
             "tools": self.tools,
             "prompts": self.prompts,
+            "default_responses": self.default_responses,
             "circuit": {
                 "enabled": self.circuit.enabled,
                 "failure_threshold": self.circuit.failure_threshold,
