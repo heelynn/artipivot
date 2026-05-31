@@ -258,8 +258,6 @@ ARTIPIVOT_STORAGE_MODE=memory
 
 ### Chat — 对话
 
-![Chat 空页](doc/screenshots/chat-page-empty.png)
-
 左侧选择 Agent，右侧输入消息开始对话。流式输出，支持 Markdown 渲染。
 
 ![Chat 对话历史](doc/screenshots/chat-with-history.png)
