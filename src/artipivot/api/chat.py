@@ -113,7 +113,7 @@ async def chat_stream(agent_id: str, req: ChatRequest):
                 try:
                     graph = gateway._graphs.get(agent_id)
                     if graph:
-                        full_tid = f"{agent_id}:{req.thread_id}"
+                        full_tid = f"{agent_id}:{req.user_id}:{req.thread_id}"
                         state_cfg = {"configurable": {"thread_id": full_tid}}
                         try:
                             final_state = await graph.aget_state(state_cfg)
@@ -159,14 +159,14 @@ class ThreadInfo(BaseModel):
 
 
 @chat_router.get("/chat/{agent_id}/threads", response_model=list[ThreadInfo])
-async def list_threads(agent_id: str):
+async def list_threads(agent_id: str, user_id: str = "anonymous"):
     """List all conversation threads for an agent."""
     sp = get_memory_storage()
     checkpointer = sp.checkpointer
     if checkpointer is None:
         return []
 
-    prefix = f"{agent_id}:"
+    prefix = f"{agent_id}:{user_id}:"
     seen: dict[str, ThreadInfo] = {}
 
     # Collect all checkpoints — handle both sync and async checkpointers
@@ -211,14 +211,14 @@ async def list_threads(agent_id: str):
 
 
 @chat_router.get("/chat/{agent_id}/threads/{thread_id}/messages")
-async def get_thread_messages(agent_id: str, thread_id: str):
+async def get_thread_messages(agent_id: str, thread_id: str, user_id: str = "anonymous"):
     """Load historical messages for a thread."""
     gw = get_gateway()
     if agent_id not in gw._graphs:
         raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
 
     graph = gw._graphs[agent_id]
-    full_thread_id = f"{agent_id}:{thread_id}"
+    full_thread_id = f"{agent_id}:{user_id}:{thread_id}"
     config = {"configurable": {"thread_id": full_thread_id}}
 
     try:
@@ -250,14 +250,14 @@ async def get_thread_messages(agent_id: str, thread_id: str):
 
 
 @chat_router.delete("/chat/{agent_id}/threads/{thread_id}")
-async def delete_thread(agent_id: str, thread_id: str):
+async def delete_thread(agent_id: str, thread_id: str, user_id: str = "anonymous"):
     """Delete a conversation thread."""
     sp = get_memory_storage()
     checkpointer = sp.checkpointer
     if checkpointer is None:
         raise HTTPException(status_code=500, detail="No checkpointer configured")
 
-    full_thread_id = f"{agent_id}:{thread_id}"
+    full_thread_id = f"{agent_id}:{user_id}:{thread_id}"
     try:
         if hasattr(checkpointer, "adelete_thread"):
             await checkpointer.adelete_thread(full_thread_id)

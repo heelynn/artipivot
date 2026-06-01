@@ -26,6 +26,7 @@ class ReActStrategy(Strategy):
         tool_node: ToolNode,
         *,
         config: dict | None = None,
+        checkpointer=None,
     ) -> CompiledStateGraph:
         cfg = config or {}
         max_iterations = cfg.get("max_iterations", sub_def.max_iterations)
@@ -84,7 +85,7 @@ class ReActStrategy(Strategy):
         builder.add_conditional_edges("llm_call", should_continue)
         builder.add_edge("tools", "llm_call")
 
-        return builder.compile()
+        return builder.compile(checkpointer=checkpointer)
 
 
 register_strategy("react", ReActStrategy)

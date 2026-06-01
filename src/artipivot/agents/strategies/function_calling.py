@@ -24,6 +24,7 @@ class FunctionCallingStrategy(Strategy):
         tool_node: ToolNode,
         *,
         config: dict | None = None,
+        checkpointer=None,
     ) -> CompiledStateGraph:
         default_prompt = sub_def.system_prompt
         sub_name = sub_def.name
@@ -80,7 +81,7 @@ class FunctionCallingStrategy(Strategy):
         # Key difference from ReAct: tools → END (no loop back)
         builder.add_edge("tools", END)
 
-        return builder.compile()
+        return builder.compile(checkpointer=checkpointer)
 
 
 register_strategy("function_calling", FunctionCallingStrategy)

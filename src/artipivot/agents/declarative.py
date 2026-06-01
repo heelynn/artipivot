@@ -25,6 +25,8 @@ class DeclarativeSubAgentDef:
 def build_declarative_subagent(
     defn: DeclarativeSubAgentDef,
     tool_node: ToolNode,
+    *,
+    checkpointer=None,
 ) -> CompiledStateGraph:
     """Build sub-agent graph from declarative definition."""
     # Ensure strategy modules are imported so they self-register
@@ -37,4 +39,4 @@ def build_declarative_subagent(
         tools=defn.tools,
         system_prompt=defn.system_prompt,
     )
-    return strategy.build(sub_def, tool_node, config=defn.strategy_config or None)
+    return strategy.build(sub_def, tool_node, config=defn.strategy_config or None, checkpointer=checkpointer)

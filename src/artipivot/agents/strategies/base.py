@@ -20,6 +20,7 @@ class Strategy(ABC):
         tool_node: ToolNode,
         *,
         config: dict | None = None,
+        checkpointer=None,
     ) -> CompiledStateGraph:
         """Build a compiled sub-agent graph for this strategy."""
         ...

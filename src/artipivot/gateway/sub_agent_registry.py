@@ -68,7 +68,7 @@ class SubAgentRegistry:
         logger.info("sub_agent.stub_created", name=name)
         return stub
 
-    async def load_from_store(self, store) -> None:
+    async def load_from_store(self, store, *, checkpointer=None) -> None:
         """Load sub-agent definitions from DocumentStore "sub_agents" collection.
 
         For each record, build and register the sub-agent graph.
@@ -83,21 +83,13 @@ class SubAgentRegistry:
 
             if "graph" in record and record["graph"]:
                 # DSL graph sub-agent
-                from artipivot.graph.dsl import parse_graph_def, build_dsl_graph
+                from artipivot.graph.dsl import parse_graph_def
 
                 gd = parse_graph_def(name, record["graph"])
-                graph = build_dsl_graph(
-                    gd,
-                    tool_registry=self._tools,
-                    model_provider=self._model_provider,
-                )
-                self.register(name, graph, defn=gd)
+                self.build_and_register(name, gd, checkpointer=checkpointer)
             else:
                 # Declarative sub-agent
-                from artipivot.agents.declarative import (
-                    DeclarativeSubAgentDef,
-                    build_declarative_subagent,
-                )
+                from artipivot.agents.declarative import DeclarativeSubAgentDef
 
                 tool_names = record.get("tools", [])
                 defn = DeclarativeSubAgentDef(
@@ -107,9 +99,7 @@ class SubAgentRegistry:
                     system_prompt=record.get("system_prompt", ""),
                     strategy_config=record.get("strategy_config", {}),
                 )
-                tool_node = self._tools.get_tool_node(tool_names)
-                graph = build_declarative_subagent(defn, tool_node)
-                self.register(name, graph, defn=defn)
+                self.build_and_register(name, defn, checkpointer=checkpointer)
 
         logger.info("sub_agent.loaded_from_store", count=len(records))
 
@@ -185,11 +175,11 @@ class SubAgentRegistry:
 
         if isinstance(defn, DeclarativeSubAgentDef):
             tool_node = self._tools.get_tool_node(defn.tools)
-            return build_declarative_subagent(defn, tool_node)
+            return build_declarative_subagent(defn, tool_node, checkpointer=checkpointer)
 
         if isinstance(defn, SubAgentDef):
             tool_node = self._tools.get_tool_node(defn.tools)
-            return build_programmatic_subagent(defn, tool_node)
+            return build_programmatic_subagent(defn, tool_node, checkpointer=checkpointer)
 
         raise TypeError(f"Unknown sub-agent definition type: {type(defn)}")
 

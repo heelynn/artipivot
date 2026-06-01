@@ -17,6 +17,8 @@ from artipivot.observability import log, bind
 def build_programmatic_subagent(
     sub_def: SubAgentDef,
     tool_node: ToolNode,
+    *,
+    checkpointer=None,
 ) -> CompiledStateGraph:
     """Build a ReAct-style sub-agent graph.
 
@@ -77,4 +79,4 @@ def build_programmatic_subagent(
     builder.add_conditional_edges("llm_call", should_continue)
     builder.add_edge("tools", "llm_call")
 
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)

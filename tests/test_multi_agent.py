@@ -365,11 +365,11 @@ class TestMultiAgentIsolation:
 
         await gw.invoke("code_agent", "hello", "t1")
         config = graph_mock.ainvoke.call_args[0][1]
-        assert config["configurable"]["thread_id"] == "code_agent:t1"
+        assert config["configurable"]["thread_id"] == "code_agent:default_user:t1"
 
         await gw.invoke("research_agent", "hello", "t1")
         config = graph_mock.ainvoke.call_args[0][1]
-        assert config["configurable"]["thread_id"] == "research_agent:t1"
+        assert config["configurable"]["thread_id"] == "research_agent:default_user:t1"
 
     def test_namespace_isolation(self):
         """Memory namespaces are agent-scoped."""

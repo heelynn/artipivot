@@ -93,7 +93,7 @@ class AgentGateway:
             raise ValueError(f"Unknown agent: {agent_id}")
 
         graph = self._graphs[agent_id]
-        full_thread_id = f"{agent_id}:{thread_id}"
+        full_thread_id = f"{agent_id}:{user_id}:{thread_id}"
         trace_id = generate_trace_id()
 
         bind_trace_id(
@@ -192,7 +192,7 @@ class AgentGateway:
             raise ValueError(f"Unknown agent: {agent_id}")
 
         graph = self._graphs[agent_id]
-        full_thread_id = f"{agent_id}:{thread_id}"
+        full_thread_id = f"{agent_id}:{user_id}:{thread_id}"
         trace_id = generate_trace_id()
 
         bind_trace_id(trace_id, agent_id=agent_id, user_id=user_id, thread_id=full_thread_id)
